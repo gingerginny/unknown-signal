@@ -36,7 +36,7 @@ const _initCanvasH = windowHeight;
 const _updateCanvasHeight = () => {
   const vvp = window.visualViewport;
   const newH = vvp ? vvp.height : window.innerHeight;
-  const newW = vvp ? vvp.width : window.innerWidth;
+  const newW = Math.min(vvp ? vvp.width : window.innerWidth, 430);
   canvas.style.width = newW + 'px';
   // 高度减少超过 25% 认为是键盘弹出，不压缩 canvas
   if (newH >= _initCanvasH * 0.75) {
