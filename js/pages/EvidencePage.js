@@ -184,6 +184,7 @@ export class EvidencePage extends Scene {
     this._reasoningScrollVelocity = 0;
     this._reasoningScrollDragging = false;
     this._reasoningScrollLastY = 0;
+    this._reasoningScrollMoved = false;  // 区分拖拽与点击
 
     // 逻辑链路 ScrollView
     this._chainScrollView = null;
@@ -248,12 +249,12 @@ export class EvidencePage extends Scene {
     this.width = this._screenWidth;
     this.height = this._screenHeight;
 
-    // 球体尺寸：固定 300px（页面整体可滚动，无需按高度压缩）
-    this._sphereAreaSize = 300;
-    this._sphereRadius = 110;
-    this._sphereCenterX = 150;
-    this._sphereCenterY = 150;
-    this._projectionDepth = 200;
+    // 球体尺寸：240px（页面可滚动，无需过大）
+    this._sphereAreaSize = 240;
+    this._sphereRadius = 88;
+    this._sphereCenterX = 120;
+    this._sphereCenterY = 120;
+    this._projectionDepth = 160;
 
     // 标记页面访问
     gameState.markPageVisited('evidence');
@@ -1657,6 +1658,7 @@ export class EvidencePage extends Scene {
     // ── touchStart：锁定交互目标 ─────────────────────────────────────────
     if (phase === 'start') {
       this._reasoningScrollDragging = !inSphere;
+      this._reasoningScrollMoved = false;
       this._reasoningScrollLastY = y;
       this._reasoningScrollVelocity = 0;
       if (inSphere) {
@@ -1674,6 +1676,7 @@ export class EvidencePage extends Scene {
     if (phase === 'move') {
       if (this._reasoningScrollDragging) {
         const delta = this._reasoningScrollLastY - y;
+        if (Math.abs(delta) > 3) this._reasoningScrollMoved = true;
         this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + delta));
         this._reasoningScrollVelocity = delta * 0.6;
         this._reasoningScrollLastY = y;
@@ -1696,7 +1699,9 @@ export class EvidencePage extends Scene {
     if (phase === 'end') {
       if (this._reasoningScrollDragging) {
         this._reasoningScrollDragging = false;
-        return;
+        // 有实际位移 → 是滚动，不处理点击
+        if (this._reasoningScrollMoved) return;
+        // 无位移 → 是点击，继续向下判断
       }
 
       // 球体点击
