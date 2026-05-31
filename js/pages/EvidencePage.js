@@ -51,14 +51,9 @@ const REASONING_DISTRACTORS = [
   'dual_moon',           // 双月重叠（案发时间节点，迷惑性强）
 ];
 
-// ====== 3D 球体参数 ======
-const SPHERE_RADIUS = 110;        // 逻辑像素半径
-const SPHERE_CENTER_X = 150;      // 球心 X（容器内）
-const SPHERE_CENTER_Y = 150;      // 球心 Y（容器内）
-const PROJECTION_DEPTH = 200;     // 投影深度
+// ====== 3D 球体参数（固定比例常量，尺寸在 onEnter 按屏幕宽度动态计算）======
 const ROTATION_SPEED = 0.006;     // 旋转速度系数
 const INERTIA_DECAY = 0.88;       // 惯性衰减
-const SPHERE_AREA_SIZE = 300;     // 球体容器尺寸（逻辑像素）
 
 // ====== 导航栏 ======
 const HEADER_HEIGHT = 44;
@@ -245,6 +240,14 @@ export class EvidencePage extends Scene {
 
     this.width = this._screenWidth;
     this.height = this._screenHeight;
+
+    // 球体尺寸按屏幕宽度自适应（占屏幕宽度 90%，最大 420px）
+    const _sz = Math.min(Math.floor(this._screenWidth * 0.9), 420);
+    this._sphereAreaSize = _sz;
+    this._sphereRadius = Math.floor(_sz * 0.38);
+    this._sphereCenterX = Math.floor(_sz / 2);
+    this._sphereCenterY = Math.floor(_sz / 2);
+    this._projectionDepth = Math.floor(_sz * 0.67);
 
     // 标记页面访问
     gameState.markPageVisited('evidence');
@@ -840,9 +843,9 @@ export class EvidencePage extends Scene {
       for (let i = 0; i < total; i++) {
         const phi = Math.acos(-1 + (2 * i + 1) / total);
         const theta = Math.sqrt((total + 1) * Math.PI) * phi;
-        items[i].x = SPHERE_RADIUS * Math.sin(phi) * Math.cos(theta);
-        items[i].y = SPHERE_RADIUS * Math.sin(phi) * Math.sin(theta);
-        items[i].z = SPHERE_RADIUS * Math.cos(phi);
+        items[i].x = this._sphereRadius * Math.sin(phi) * Math.cos(theta);
+        items[i].y = this._sphereRadius * Math.sin(phi) * Math.sin(theta);
+        items[i].z = this._sphereRadius * Math.cos(phi);
       }
     }
 
@@ -858,13 +861,13 @@ export class EvidencePage extends Scene {
     if (this._hintStage >= 3) glowIds.push(this._hintBubble1Id);
 
     return this._sphereItems.map(item => {
-      const per = (2 * PROJECTION_DEPTH) / (2 * PROJECTION_DEPTH + item.z);
+      const per = (2 * this._projectionDepth) / (2 * this._projectionDepth + item.z);
       return {
         id: item.id,
         name: item.name,
         type: item.type,
-        screenX: SPHERE_CENTER_X + item.x * per,
-        screenY: SPHERE_CENTER_Y + item.y * per,
+        screenX: this._sphereCenterX + item.x * per,
+        screenY: this._sphereCenterY + item.y * per,
         scale: per * 0.6 + 0.3,
         opacity: Math.max(0.25, Math.min(1.0, per * 0.7 + 0.2)),
         zIndex: Math.round(per * 100),
@@ -1618,7 +1621,7 @@ export class EvidencePage extends Scene {
     const contentTop = this._getContentTop();
     const modeToggleY = contentTop + 8;
     const sphereY = modeToggleY + 40;
-    const sphereBottom = sphereY + SPHERE_AREA_SIZE;
+    const sphereBottom = sphereY + this._sphereAreaSize;
     const selectedAreaY = sphereBottom + 4;
     const reasonBtnY = selectedAreaY + 40;
     const chainY = reasonBtnY + 50;
@@ -1635,8 +1638,8 @@ export class EvidencePage extends Scene {
     }
 
     // 3D 球面区域
-    const sphereLeft = (this._screenWidth - SPHERE_AREA_SIZE) / 2;
-    if (x >= sphereLeft && x <= sphereLeft + SPHERE_AREA_SIZE &&
+    const sphereLeft = (this._screenWidth - this._sphereAreaSize) / 2;
+    if (x >= sphereLeft && x <= sphereLeft + this._sphereAreaSize &&
         y >= sphereY && y <= sphereBottom) {
       if (phase === 'start') {
         this._isInertiaActive = false;
@@ -2146,13 +2149,13 @@ export class EvidencePage extends Scene {
     this._drawSphere(ctx, contentTop + 40);
 
     // 已选展示区
-    this._drawSelectedArea(ctx, contentTop + 40 + SPHERE_AREA_SIZE + 4);
+    this._drawSelectedArea(ctx, contentTop + 40 + this._sphereAreaSize + 4);
 
     // 推理按钮
-    this._drawReasonButton(ctx, contentTop + 40 + SPHERE_AREA_SIZE + 44);
+    this._drawReasonButton(ctx, contentTop + 40 + this._sphereAreaSize + 44);
 
     // 逻辑链路
-    const chainY = contentTop + 40 + SPHERE_AREA_SIZE + 90;
+    const chainY = contentTop + 40 + this._sphereAreaSize + 90;
     this._drawLogicChain(ctx, chainY);
 
     // 提示卡片：固定锚在屏幕底部
@@ -2334,15 +2337,15 @@ export class EvidencePage extends Scene {
   /** 3D 球面绘制 */
   _drawSphere(ctx, y) {
     const sw = this._screenWidth;
-    const sphereLeft = (sw - SPHERE_AREA_SIZE) / 2;
+    const sphereLeft = (sw - this._sphereAreaSize) / 2;
     const sx = sphereLeft;
     const sy = y;
-    const sSize = SPHERE_AREA_SIZE;
+    const sSize = this._sphereAreaSize;
 
     ctx.save();
 
     // 球体环境光晕
-    const glowR = SPHERE_AREA_SIZE * 0.4;
+    const glowR = this._sphereAreaSize * 0.4;
     const gx = sx + sSize / 2;
     const gy = sy + sSize / 2;
     const ambGrad = ctx.createRadialGradient(gx, gy, 0, gx, gy, glowR);
@@ -2358,12 +2361,12 @@ export class EvidencePage extends Scene {
     ctx.strokeStyle = 'rgba(0, 245, 212, 0.1)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(gx, gy, SPHERE_AREA_SIZE * 0.4, SPHERE_AREA_SIZE * 0.15, 0, 0, Math.PI * 2);
+    ctx.ellipse(gx, gy, this._sphereAreaSize * 0.4, this._sphereAreaSize * 0.15, 0, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.strokeStyle = 'rgba(155, 93, 229, 0.08)';
     ctx.beginPath();
-    ctx.ellipse(gx, gy, SPHERE_AREA_SIZE * 0.35, SPHERE_AREA_SIZE * 0.12, Math.PI / 6, 0, Math.PI * 2);
+    ctx.ellipse(gx, gy, this._sphereAreaSize * 0.35, this._sphereAreaSize * 0.12, Math.PI / 6, 0, Math.PI * 2);
     ctx.stroke();
 
     // 绘制气泡

@@ -9,10 +9,9 @@ window.wx = {
   // ===== 系统信息 =====
 
   getWindowInfo() {
-    const MAX_W = 430;
     const SAFE_BOTTOM = 20; // 模拟 home indicator / 底部安全区，保证底部 UI 不被截断
     const vvp = window.visualViewport;
-    const w = Math.min(vvp ? vvp.width : window.innerWidth, MAX_W);
+    const w = vvp ? vvp.width : window.innerWidth;
     const h = vvp ? vvp.height : window.innerHeight;
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 3);
     return {
