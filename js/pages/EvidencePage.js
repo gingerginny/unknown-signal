@@ -249,12 +249,12 @@ export class EvidencePage extends Scene {
     this.width = this._screenWidth;
     this.height = this._screenHeight;
 
-    // 球体尺寸：240px（页面可滚动，无需过大）
-    this._sphereAreaSize = 240;
-    this._sphereRadius = 88;
-    this._sphereCenterX = 120;
-    this._sphereCenterY = 120;
-    this._projectionDepth = 160;
+    // 球体尺寸：300px（页面可滚动，恢复原始大小）
+    this._sphereAreaSize = 300;
+    this._sphereRadius = 110;
+    this._sphereCenterX = 150;
+    this._sphereCenterY = 150;
+    this._projectionDepth = 200;
 
     // 标记页面访问
     gameState.markPageVisited('evidence');
