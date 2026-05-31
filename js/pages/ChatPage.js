@@ -869,9 +869,15 @@ export class ChatPage extends Scene {
     this._typingNode.visible = isTyping;
 
     if (isTyping) {
-      // 定位打字指示器到消息列表底部
       this._typingNode.y = this._contentHeight;
       this._typingTimer = 0;
+      // 临时扩展 contentHeight，让 scrollToBottom 能滚到打字指示器位置
+      const h = this._contentHeight + 54 + MSG_PADDING;
+      this._scrollView.contentHeight = h;
+      this._msgContainer.height = h;
+    } else {
+      // 恢复正常高度
+      this._updateScrollContent();
     }
   }
 
@@ -1089,6 +1095,11 @@ export class ChatPage extends Scene {
    * @private
    */
   _relayoutBubbles() {
+    const sv = this._scrollView;
+    // 视口裁剪范围（相对于 _msgContainer 的 Y 坐标空间）
+    const visTop = sv ? sv.scrollY - MSG_PADDING - 60 : 0;
+    const visBottom = sv ? sv.scrollY + sv.height + 60 : Infinity;
+
     let y = 0;
     let changed = false;
 
@@ -1097,9 +1108,11 @@ export class ChatPage extends Scene {
         bubble.y = y;
         changed = true;
       }
-      // 保护：若气泡高度尚未确定（首帧未渲染），使用估算值
       const h = bubble.getHeight();
       y += (h > 0 ? h : 40) + MSG_GAP;
+
+      // 视口外的气泡跳过渲染（不影响布局计算）
+      bubble.visible = (bubble.y + h >= visTop) && (bubble.y <= visBottom);
     }
 
     if (changed || Math.abs(y - this._contentHeight) > 1) {

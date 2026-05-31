@@ -266,7 +266,7 @@ export class ScrollView extends Node {
    * @returns {boolean}
    */
   didScroll() {
-    return Math.abs(this.scrollY - this._touchStartScrollY) > 10;
+    return Math.abs(this.scrollY - this._touchStartScrollY) > 20;
   }
 
   /**

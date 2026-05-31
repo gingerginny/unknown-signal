@@ -24,22 +24,6 @@ import {
 
 import { evidenceList, reasoningCombos } from '../data/story.js';
 
-// 每个幽灵问题的专属证据池（正确选项 + 3个干扰项）
-// 顺序：正确答案 ID 排第一，其余为干扰项
-const GHOST_QUESTION_POOLS = [
-  // Q1 你认为我是谁？(凶手)
-  ['ghost', 'xinghe', 'weizi_cluster', 'fasi'],
-  // Q2 我用什么杀死了她？(凶器)
-  ['weapon', 'spacetime_disturbance', 'weizi_conversion', 'consciousness_archive'],
-  // Q3 密室是如何形成的？(locked_room_cause)
-  ['locked_room_cause', 'surveillance', 'spirit_elevator', 'x_structure'],
-  // Q4 我是什么？(weizi_cluster)
-  ['weizi_cluster', 'ghost', 'fasi', 'collective_wisdom'],
-  // Q5 如何杀死一个万界以外的人？(weizi_conversion)
-  ['weizi_conversion', 'weizi', 'spacetime_disturbance', 'consciousness_archive'],
-  // Q6 是因是果？(cause_and_effect)
-  ['cause_and_effect', 'impossible_leap', 'leap_framework', 'x_structure'],
-];
 
 // ====== 终端色彩常量 ======
 const TERM_GREEN = 'rgba(0, 255, 65, 0.9)';
@@ -108,7 +92,7 @@ const GHOST_QUESTIONS = [
     correctId: 'weizi_cluster',
     wrongHint: '再试试，除了幽灵这个名字之外，我是什么？',
     correctResponse: [
-      '是的，我并非人，而是从法司大人那里意外逃逸事件中残存下来，拥有自我意识的微子团。',
+      '是的，我并非人，而是从法司大人归档过程中意外残留下来，拥有自我意识的微子团。',
       '那么，没有躯体的我，到底是如何杀死阿里亚斯的呢？',
     ],
   },
@@ -223,6 +207,14 @@ export class GhostChatPage extends Scene {
     const state = gameState.get();
     if (state.choices && state.choices.ghostChatDone) {
       this._showCompletedState();
+      return;
+    }
+
+    // 检查是否有中断进度可恢复
+    let saved = null;
+    try { saved = wx.getStorageSync('ghost_chat_progress'); } catch (e) {}
+    if (saved && saved.messages && saved.messages.length > 0) {
+      this._restoreProgress(saved);
       return;
     }
 
@@ -546,23 +538,42 @@ export class GhostChatPage extends Scene {
     const reasoningResults = state.reasoningResults || [];
     const allIds = new Set([...collectedIds, ...reasoningResults]);
 
-    // 使用问题专属池（已收集的才显示）
-    const questionPool = (questionIdx !== undefined && GHOST_QUESTION_POOLS[questionIdx])
-      ? GHOST_QUESTION_POOLS[questionIdx]
+    const correctId = (questionIdx !== undefined && GHOST_QUESTIONS[questionIdx])
+      ? GHOST_QUESTIONS[questionIdx].correctId
       : null;
 
-    const pool = [];
-    const idsToShow = questionPool || [...allIds];
+    // 将所有可用 ID 转为词条对象
+    const toItem = (id) => {
+      const combo = reasoningCombos.find(c => c.resultId === id);
+      if (combo) return { id, name: combo.resultName, type: 'result' };
+      if (evidenceList[id]) return { id, name: evidenceList[id].name, type: 'evidence' };
+      return null;
+    };
 
-    idsToShow.forEach(id => {
-      if (!allIds.has(id)) return; // 未收集则跳过
-      const comboResult = reasoningCombos.find(c => c.resultId === id);
-      if (comboResult) {
-        pool.push({ id, name: comboResult.resultName, type: 'result' });
-      } else if (evidenceList[id]) {
-        pool.push({ id, name: evidenceList[id].name, type: 'evidence' });
-      }
-    });
+    // 构建干扰项候选（排除正确答案）
+    const distractorCandidates = [...allIds]
+      .filter(id => id !== correctId)
+      .map(toItem)
+      .filter(Boolean);
+
+    // Fisher-Yates 随机打乱
+    for (let i = distractorCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [distractorCandidates[i], distractorCandidates[j]] = [distractorCandidates[j], distractorCandidates[i]];
+    }
+
+    // 取前 13 个干扰项
+    const distractors = distractorCandidates.slice(0, 13);
+
+    // 正确答案（即使未收集也强制补入）
+    const correctItem = correctId ? toItem(correctId) : null;
+    const pool = correctItem ? [correctItem, ...distractors] : [...distractors];
+
+    // 随机打乱正确答案位置
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
 
     this._evidencePool = pool;
   }
@@ -665,16 +676,18 @@ export class GhostChatPage extends Scene {
     evidenceScrollView.interactive = true;
 
     evidenceScrollView.on('touchstart', (e) => {
+      if (!this._evidencePanelNode) return;
       evidenceScrollView.onTouchStart(e.y - evidenceScrollView.y - this._evidencePanelNode.y);
       e.stopPropagation();
     });
     evidenceScrollView.on('touchmove', (e) => {
+      if (!this._evidencePanelNode) return;
       evidenceScrollView.onTouchMove(e.y - evidenceScrollView.y - this._evidencePanelNode.y);
       e.stopPropagation();
     });
     evidenceScrollView.on('touchend', (e) => {
       evidenceScrollView.onTouchEnd();
-      if (!evidenceScrollView.didScroll()) {
+      if (!evidenceScrollView.didScroll() && this._evidencePanelNode) {
         this._handleEvidenceTap(e.x - evidenceScrollView.x, e.y - evidenceScrollView.y - this._evidencePanelNode.y + evidenceScrollView.scrollY);
       }
     });
@@ -915,7 +928,7 @@ export class GhostChatPage extends Scene {
     msgNode.height = Math.max(20, estLines * 20);
 
     this._msgContainer.addChild(msgNode);
-    this._messages.push({ type, text: '', id: msgId, node: msgNode, label: ghostLabel });
+    this._messages.push({ type, text: fullText, id: msgId, node: msgNode, label: ghostLabel });
     this._contentHeight += msgNode.height + MSG_GAP;
     this._updateScrollContent();
     this._scrollToBottom();
@@ -961,21 +974,24 @@ export class GhostChatPage extends Scene {
 
     const q = GHOST_QUESTIONS[index];
     this._currentQuestion = index;
+    this._phase = 'questioning';
+    // 每题重建证据池，确保正确答案存在
+    this._buildEvidencePool(index);
 
     if (q.question) {
-      // 有显式提问文本
       this._addMessage('ghost', q.question, () => {
         this._isTyping = false;
         this._updateTypingState();
         this._setEvidencePanel(true);
         this._scrollToBottom();
+        this._saveProgress(); // 问题消息加入后再存档
       });
     } else {
-      // 无显式提问
       this._isTyping = false;
       this._updateTypingState();
       this._setEvidencePanel(true);
       this._scrollToBottom();
+      this._saveProgress(); // 无问题文字时直接存档
     }
   }
 
@@ -1017,8 +1033,11 @@ export class GhostChatPage extends Scene {
     this._addMessage('ghost', q.wrongHint, () => {
       this._isTyping = false;
       this._updateTypingState();
+      // 重建证据池以确保正确答案始终存在
+      this._buildEvidencePool(this._currentQuestion);
       this._setEvidencePanel(true);
       this._scrollToBottom();
+      this._saveProgress(); // 答错提示显示后存档，保留错误记录
     });
   }
 
@@ -1026,12 +1045,115 @@ export class GhostChatPage extends Scene {
 
   _startFinal() {
     this._phase = 'final';
+    this._saveProgress();
 
     this._playMessageQueue(GHOST_FINAL, () => {
       gameState.setChoice('ghostChatDone', true);
+      try { wx.removeStorageSync('ghost_chat_progress'); } catch (e) {}
       this._phase = 'done';
       this._updateStatusText();
     });
+  }
+
+  // ==================== 进度持久化 ====================
+
+  _saveProgress() {
+    const data = {
+      phase: this._phase,
+      currentQuestion: this._currentQuestion,
+      messages: this._messages.map(m => ({ type: m.type, text: m.text })),
+    };
+    try { wx.setStorageSync('ghost_chat_progress', data); } catch (e) {}
+  }
+
+  _restoreProgress(saved) {
+    this._phase = saved.phase || 'questioning';
+    this._currentQuestion = saved.currentQuestion || 0;
+
+    (saved.messages || []).forEach(m => this._addMessageInstant(m.type, m.text));
+
+    this._scrollToBottom();
+    this._updateStatusText();
+
+    if (this._phase === 'questioning') {
+      this._buildEvidencePool(this._currentQuestion);
+      this._setEvidencePanel(true);
+    }
+  }
+
+  _addMessageInstant(type, fullText) {
+    const msgId = 'msg_' + (++this._msgId);
+    const msgNode = new Node();
+    msgNode.x = 0;
+    msgNode.y = this._contentHeight;
+    msgNode.width = this._screenWidth;
+
+    if (type === 'system') {
+      const sysLabel = new Label({
+        text: `[ ${fullText} ]`,
+        fontSize: 12,
+        color: 'rgba(0, 255, 65, 0.6)',
+        textAlign: 'center',
+        fontFamily: FONT_PRIMARY,
+      });
+      sysLabel.width = this._screenWidth - 20;
+      sysLabel.x = 10;
+      sysLabel.y = 8;
+      msgNode.addChild(sysLabel);
+      msgNode.height = 32;
+    } else if (type === 'player') {
+      const boxW = Math.min(fullText.length * 14 + 28, this._screenWidth * 0.7);
+      const boxX = this._screenWidth - boxW - 10;
+      const playerLabel = new Label({
+        text: fullText,
+        fontSize: 14,
+        color: TERM_CYAN,
+        textAlign: 'center',
+        maxWidth: boxW - 16,
+      });
+      playerLabel.width = boxW;
+      playerLabel.x = boxX;
+      playerLabel.y = 13;
+      msgNode.addChild(playerLabel);
+      const playerBg = new Node();
+      playerBg.width = this._screenWidth;
+      playerBg.height = 40;
+      const _boxW = boxW, _boxX = boxX;
+      playerBg._draw = function(ctx) {
+        ctx.beginPath();
+        ctx.rect(_boxX, 2, _boxW, 36);
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.25)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 200, 255, 0.04)';
+        ctx.fill();
+      };
+      playerBg.zIndex = -1;
+      msgNode.addChild(playerBg);
+      msgNode.height = 44;
+    } else {
+      const prefixLabel = new Label({ text: '>', fontSize: 14, color: TERM_GREEN_DIM });
+      prefixLabel.x = 0;
+      prefixLabel.y = 0;
+      msgNode.addChild(prefixLabel);
+      const ghostLabel = new Label({
+        text: fullText,
+        fontSize: 14,
+        color: TERM_GREEN,
+        maxWidth: this._screenWidth - 30,
+        shadowLayers: [{ color: 'rgba(0, 255, 65, 0.25)', blur: 3 }],
+      });
+      ghostLabel.x = 16;
+      ghostLabel.y = 0;
+      msgNode.addChild(ghostLabel);
+      const lines = Math.ceil(fullText.length / Math.floor((this._screenWidth - 30) / 14));
+      msgNode.height = Math.max(20, lines * 20);
+    }
+
+    this._msgContainer.addChild(msgNode);
+    this._messages.push({ type, text: fullText, id: msgId, node: msgNode });
+    this._contentHeight += msgNode.height + MSG_GAP;
+    this._updateScrollContent();
   }
 
   /**

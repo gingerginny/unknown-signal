@@ -75,6 +75,14 @@ export class SocialPage extends Scene {
 
     /** 按下的卡片索引 */
     this._pressedPostIndex = -1;
+
+    /** 缓存的静态 gradient 对象（懒初始化，避免每帧重建） */
+    this._cachedHeaderGrad = null;
+    this._cachedAmbientGrad1 = null;
+    this._cachedAmbientGrad2 = null;
+    this._cachedFlowGrad = null;
+    this._cachedAvatarGrad = null;
+
   }
 
   // ==================== 生命周期 ====================
@@ -491,31 +499,31 @@ export class SocialPage extends Scene {
     ctx.fillStyle = BG_DARK;
     ctx.fillRect(0, 0, sw, sh);
 
-    // 环境光（底部蓝光 + 右上洋红氛围）
-    const ambientGrad1 = ctx.createRadialGradient(
-      sw * 0.5, sh, 0,
-      sw * 0.5, sh, sw * 0.8
-    );
-    ambientGrad1.addColorStop(0, 'rgba(58, 134, 255, 0.04)');
-    ambientGrad1.addColorStop(1, 'transparent');
-    ctx.fillStyle = ambientGrad1;
+    // 环境光（底部蓝光 + 右上洋红氛围）—— 懒缓存，避免每帧重建
+    if (!this._cachedAmbientGrad1) {
+      this._cachedAmbientGrad1 = ctx.createRadialGradient(sw * 0.5, sh, 0, sw * 0.5, sh, sw * 0.8);
+      this._cachedAmbientGrad1.addColorStop(0, 'rgba(58, 134, 255, 0.04)');
+      this._cachedAmbientGrad1.addColorStop(1, 'transparent');
+    }
+    ctx.fillStyle = this._cachedAmbientGrad1;
     ctx.fillRect(0, 0, sw, sh);
 
-    const ambientGrad2 = ctx.createRadialGradient(
-      sw * 0.8, sh * 0.1, 0,
-      sw * 0.8, sh * 0.1, sw * 0.5
-    );
-    ambientGrad2.addColorStop(0, 'rgba(255, 45, 224, 0.03)');
-    ambientGrad2.addColorStop(1, 'transparent');
-    ctx.fillStyle = ambientGrad2;
+    if (!this._cachedAmbientGrad2) {
+      this._cachedAmbientGrad2 = ctx.createRadialGradient(sw * 0.8, sh * 0.1, 0, sw * 0.8, sh * 0.1, sw * 0.5);
+      this._cachedAmbientGrad2.addColorStop(0, 'rgba(255, 45, 224, 0.03)');
+      this._cachedAmbientGrad2.addColorStop(1, 'transparent');
+    }
+    ctx.fillStyle = this._cachedAmbientGrad2;
     ctx.fillRect(0, 0, sw, sh);
 
     // ====== 导航栏背景 ======
     const headerH = (headerTop + HEADER_HEIGHT);
-    const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-    headerGrad.addColorStop(0, 'rgba(10, 14, 39, 0.98)');
-    headerGrad.addColorStop(1, 'rgba(10, 14, 39, 0.85)');
-    ctx.fillStyle = headerGrad;
+    if (!this._cachedHeaderGrad) {
+      this._cachedHeaderGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+      this._cachedHeaderGrad.addColorStop(0, 'rgba(10, 14, 39, 0.98)');
+      this._cachedHeaderGrad.addColorStop(1, 'rgba(10, 14, 39, 0.85)');
+    }
+    ctx.fillStyle = this._cachedHeaderGrad;
     ctx.fillRect(0, 0, sw, headerH);
 
     // ====== 返回按钮 ======
@@ -572,13 +580,15 @@ export class SocialPage extends Scene {
 
     // ====== 流光线（蓝+洋红双色） ======
     const flowLineY = headerH;
-    const flowGrad = ctx.createLinearGradient(0, 0, sw, 0);
-    flowGrad.addColorStop(0, 'transparent');
-    flowGrad.addColorStop(0.25, 'rgba(255, 45, 224, 0.08)');
-    flowGrad.addColorStop(0.5, 'rgba(58, 134, 255, 0.15)');
-    flowGrad.addColorStop(0.75, 'rgba(255, 45, 224, 0.08)');
-    flowGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = flowGrad;
+    if (!this._cachedFlowGrad) {
+      this._cachedFlowGrad = ctx.createLinearGradient(0, 0, sw, 0);
+      this._cachedFlowGrad.addColorStop(0, 'transparent');
+      this._cachedFlowGrad.addColorStop(0.25, 'rgba(255, 45, 224, 0.08)');
+      this._cachedFlowGrad.addColorStop(0.5, 'rgba(58, 134, 255, 0.15)');
+      this._cachedFlowGrad.addColorStop(0.75, 'rgba(255, 45, 224, 0.08)');
+      this._cachedFlowGrad.addColorStop(1, 'transparent');
+    }
+    ctx.fillStyle = this._cachedFlowGrad;
     ctx.fillRect(0, flowLineY, sw, 1);
 
     // 流光扫描
@@ -642,40 +652,40 @@ export class SocialPage extends Scene {
     const svY = sv.y;
     const svW = sv.width;
     const svH = sv.height;
+    const curScrollY = sv.scrollY;
+
+    // 视口范围（内容坐标系，传给 draw 函数做裁剪用）
+    const visTop = curScrollY;
+    const visBottom = curScrollY + svH;
 
     ctx.save();
-    // 移到 ScrollView 位置
     ctx.translate(svX, svY);
 
-    // 裁剪可视区域
     ctx.beginPath();
     ctx.rect(0, 0, svW, svH);
     ctx.clip();
 
-    // 应用滚动偏移
-    ctx.translate(0, -sv.scrollY);
+    ctx.translate(0, -curScrollY);
 
-    // 绘制个人资料卡
     this._drawProfileCard(ctx);
-
-    // 绘制 Tab 栏
     this._drawTabBar(ctx);
 
-    // 绘制帖子列表 或 热点榜
     if (this._activeTab === 'trending') {
-      this._drawTrendingList(ctx);
+      this._drawTrendingList(ctx, visTop, visBottom);
     } else {
-      this._drawPostList(ctx);
+      this._drawPostList(ctx, visTop, visBottom);
     }
 
-    // 渲染 ScrollView 中的 RichText 子节点
+    // 只渲染视口内的 RichText 子节点
     for (const child of sv.children) {
+      const childH = child.height || 20;
+      if (child.y + childH < visTop) continue;
+      if (child.y > visBottom) continue;
       child.render(ctx);
     }
 
     ctx.restore();
 
-    // 绘制滚动条（在裁剪外）
     if (sv.showScrollbar && sv._scrollbarAlpha > 0 && sv.contentHeight > sv.height) {
       ctx.save();
       ctx.translate(svX, svY);
@@ -706,29 +716,22 @@ export class SocialPage extends Scene {
     const avatarCX = (padding + 24);
     const avatarCY = (startY + 16 + 24);
 
-    // 头像发光背景
+    // 头像背景
     ctx.beginPath();
     ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
-    const avatarGrad = ctx.createLinearGradient(
-      avatarCX - avatarR, avatarCY - avatarR,
-      avatarCX + avatarR, avatarCY + avatarR
-    );
-    avatarGrad.addColorStop(0, 'rgba(58, 134, 255, 0.12)');
-    avatarGrad.addColorStop(1, 'rgba(255, 45, 224, 0.08)');
-    ctx.fillStyle = avatarGrad;
+    if (!this._cachedAvatarGrad) {
+      this._cachedAvatarGrad = ctx.createLinearGradient(
+        avatarCX - avatarR, avatarCY - avatarR,
+        avatarCX + avatarR, avatarCY + avatarR
+      );
+      this._cachedAvatarGrad.addColorStop(0, 'rgba(58, 134, 255, 0.12)');
+      this._cachedAvatarGrad.addColorStop(1, 'rgba(255, 45, 224, 0.08)');
+    }
+    ctx.fillStyle = this._cachedAvatarGrad;
     ctx.fill();
     ctx.strokeStyle = 'rgba(58, 134, 255, 0.3)';
     ctx.lineWidth = 1;
     ctx.stroke();
-
-    // 头像发光效果
-    ctx.shadowColor = 'rgba(58, 134, 255, 0.15)';
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
 
     // 头像文字 "A"
     ctx.font = `bold ${20}px ${FONT_PRIMARY}`;
@@ -756,11 +759,7 @@ export class SocialPage extends Scene {
     infoY += 22;
     ctx.font = `${11}px ${FONT_MONO}`;
     ctx.fillStyle = 'rgba(255, 45, 224, 0.7)';
-    ctx.shadowColor = 'rgba(255, 45, 224, 0.3)';
-    ctx.shadowBlur = 3;
     ctx.fillText(socialProfile.role, infoX, infoY);
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
 
     // 简介
     infoY += 16;
@@ -843,13 +842,7 @@ export class SocialPage extends Scene {
         ulGrad.addColorStop(0, 'rgba(58, 134, 255, 0.9)');
         ulGrad.addColorStop(1, 'rgba(255, 45, 224, 0.6)');
         ctx.fillStyle = ulGrad;
-
-        // 发光效果
-        ctx.shadowColor = 'rgba(58, 134, 255, 0.5)';
-        ctx.shadowBlur = 4;
         ctx.fillRect(ulX, ulY, ulW, ulH);
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
       }
     }
   }
@@ -858,13 +851,15 @@ export class SocialPage extends Scene {
    * 绘制帖子列表
    * @private
    */
-  _drawPostList(ctx) {
+  _drawPostList(ctx, visTop = 0, visBottom = Infinity) {
     const isFollowing = this._activeTab === 'following';
     const sw = this._screenWidth;
     const contentWidth = sw - LIST_PADDING * 2;
 
     for (let pi = 0; pi < this._postNodes.length; pi++) {
       const pn = this._postNodes[pi];
+      // 跳过视口外的帖子
+      if (pn.y + pn.height < visTop || pn.y > visBottom) continue;
       const post = pn.post;
       const py = pn.y; // 帖子绝对起始 Y
 
@@ -880,12 +875,14 @@ export class SocialPage extends Scene {
       ctx.lineTo(sw - LIST_PADDING, py + pn.height);
       ctx.stroke();
 
-      // 左侧装饰线（从卡片内边距区域开始）
-      const decoGrad = ctx.createLinearGradient(0, py + 12, 0, py + pn.height - 12);
-      decoGrad.addColorStop(0, 'rgba(58, 134, 255, 0.3)');
-      decoGrad.addColorStop(0.5, 'rgba(255, 45, 224, 0.12)');
-      decoGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = decoGrad;
+      // 左侧装饰线（懒缓存 gradient，避免每帧重建）
+      if (!pn._decoGrad) {
+        pn._decoGrad = ctx.createLinearGradient(0, py + 12, 0, py + pn.height - 12);
+        pn._decoGrad.addColorStop(0, 'rgba(58, 134, 255, 0.3)');
+        pn._decoGrad.addColorStop(0.5, 'rgba(255, 45, 224, 0.12)');
+        pn._decoGrad.addColorStop(1, 'transparent');
+      }
+      ctx.fillStyle = pn._decoGrad;
       ctx.fillRect(4, py + 12, 2, pn.height - 24);
 
       const leftX = LIST_PADDING;
@@ -900,22 +897,11 @@ export class SocialPage extends Scene {
 
         ctx.beginPath();
         ctx.arc(saCX, saCY, smallR, 0, Math.PI * 2);
-        const saGrad = ctx.createLinearGradient(saCX - smallR, saCY - smallR, saCX + smallR, saCY + smallR);
-        saGrad.addColorStop(0, 'rgba(58, 134, 255, 0.1)');
-        saGrad.addColorStop(1, 'rgba(255, 45, 224, 0.06)');
-        ctx.fillStyle = saGrad;
+        ctx.fillStyle = 'rgba(58, 134, 255, 0.08)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(58, 134, 255, 0.2)';
         ctx.lineWidth = 1;
         ctx.stroke();
-
-        ctx.shadowColor = 'rgba(58, 134, 255, 0.08)';
-        ctx.shadowBlur = 4;
-        ctx.beginPath();
-        ctx.arc(saCX, saCY, smallR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
 
         ctx.font = `bold ${13}px ${FONT_PRIMARY}`;
         ctx.fillStyle = 'rgba(58, 134, 255, 0.8)';
@@ -958,7 +944,8 @@ export class SocialPage extends Scene {
         ctx.textBaseline = 'top';
 
         const maxW = contentWidth;
-        const lines = this._wrapText(ctx, post.content || '', maxW);
+        if (!pn._wrappedLines) pn._wrappedLines = this._wrapText(ctx, post.content || '', maxW);
+        const lines = pn._wrappedLines;
         for (let li = 0; li < lines.length; li++) {
           ctx.fillText(lines[li], leftX, textAbsY + li * 14 * 1.7);
         }
@@ -992,11 +979,13 @@ export class SocialPage extends Scene {
         ctx.fillStyle = 'rgba(58, 134, 255, 0.03)';
         ctx.fillRect(commentBgX, commentStartY, commentBgW, commentTotalH + SPACING_SM * 2);
 
-        // 左侧边框线
-        const cbGrad = ctx.createLinearGradient(0, commentStartY, 0, commentStartY + commentTotalH);
-        cbGrad.addColorStop(0, 'rgba(58, 134, 255, 0.2)');
-        cbGrad.addColorStop(1, 'rgba(255, 45, 224, 0.1)');
-        ctx.fillStyle = cbGrad;
+        // 左侧边框线（懒缓存）
+        if (!pn._cbGrad) {
+          pn._cbGrad = ctx.createLinearGradient(0, commentStartY, 0, commentStartY + commentTotalH);
+          pn._cbGrad.addColorStop(0, 'rgba(58, 134, 255, 0.2)');
+          pn._cbGrad.addColorStop(1, 'rgba(255, 45, 224, 0.1)');
+        }
+        ctx.fillStyle = pn._cbGrad;
         ctx.fillRect(commentBgX, commentStartY, 2, commentTotalH + SPACING_SM * 2);
 
         localY += SPACING_SM;
@@ -1020,13 +1009,17 @@ export class SocialPage extends Scene {
             const commentContent = comment.content || '';
             // 简单处理：如果同行放不下则换行
             const remainW = contentWidth - 20 - authorW;
-            if (ctx.measureText(commentContent).width <= remainW) {
+            if (!comment._singleLine) {
+              comment._singleLine = ctx.measureText(commentContent).width <= remainW ? 'yes' : 'no';
+            }
+            if (comment._singleLine === 'yes') {
               ctx.fillText(commentContent, (leftX + 10) + authorW, localY);
               localY += 12 * 1.8;
             } else {
               // 多行
               const fullText = authorText + commentContent;
-              const cLines = this._wrapText(ctx, fullText, (contentWidth - 20));
+              if (!comment._wrappedLines) comment._wrappedLines = this._wrapText(ctx, fullText, (contentWidth - 20));
+              const cLines = comment._wrappedLines;
               for (let li = 0; li < cLines.length; li++) {
                 if (li === 0) {
                   // 第一行中作者名部分高亮
@@ -1056,11 +1049,13 @@ export class SocialPage extends Scene {
    * 绘制热点榜
    * @private
    */
-  _drawTrendingList(ctx) {
+  _drawTrendingList(ctx, visTop = 0, visBottom = Infinity) {
     const sw = this._screenWidth;
 
     for (let i = 0; i < this._trendingNodes.length; i++) {
       const tn = this._trendingNodes[i];
+      // 跳过视口外的条目
+      if (tn.y + tn.height < visTop || tn.y > visBottom) continue;
       const item = tn.item;
       const iy = tn.y;
 
@@ -1102,7 +1097,8 @@ export class SocialPage extends Scene {
       ctx.fillStyle = TEXT_SECONDARY;
       const tagHeight = 14 * 1.4;
       const contentMaxW = (sw - LIST_PADDING - 38 - LIST_PADDING - 30);
-      const contentLines = this._wrapText(ctx, item.content || '', contentMaxW);
+      if (!tn._wrappedLines) tn._wrappedLines = this._wrapText(ctx, item.content || '', contentMaxW);
+      const contentLines = tn._wrappedLines;
       for (let li = 0; li < contentLines.length; li++) {
         ctx.fillText(contentLines[li], tagX, (iy + SPACING_LG + tagHeight + 4 + li * 12 * 1.6));
       }
@@ -1167,6 +1163,10 @@ export class SocialPage extends Scene {
 
     if (this._scrollView) {
       this._scrollView.update(dt);
+      // 滚动/惯性期间标记 dirty，保证内容跟着更新
+      if (this._scrollView._isDragging || this._scrollView._isAnimating) {
+        this._scrollDirty = true;
+      }
     }
   }
 
@@ -1184,6 +1184,7 @@ export class SocialPage extends Scene {
     // ScrollView 处理
     if (this._scrollView && this._scrollView.containsPoint(x, y)) {
       this._scrollView.onTouchStart(y);
+      this._scrollDirty = true;
     }
   }
 

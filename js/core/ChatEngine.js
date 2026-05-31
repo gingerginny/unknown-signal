@@ -393,7 +393,14 @@ export default class ChatEngine {
 
     // chapter intros
     const targetProgress = state.chapter || 0;
-    const lastPlayed = this._getLastPlayedProgress();
+    let lastPlayed = this._getLastPlayedProgress();
+
+    // ch0_followup 已播完意味着 opening 已在历史里；校正 lastPlayed 为 0，避免重复填充 opening
+    if (lastPlayed < 0 && this._isCh0FollowupPlayed()) {
+      lastPlayed = 0;
+      this._setLastPlayedProgress(0);
+    }
+
     if (targetProgress <= lastPlayed) return;
 
     // chapter1_intro 门控

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>未知信号源 · 测试入口</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; min-height: 100%;
+      background: #0a0e27;
+      color: #fff;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 60px;
+    }
+
+    h1 {
+      font-size: 18px;
+      color: #00f5d4;
+      letter-spacing: 4px;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      font-size: 12px;
+      color: rgba(0,245,212,0.4);
+      letter-spacing: 2px;
+      margin-bottom: 36px;
+    }
+
+    .section-title {
+      width: 100%;
+      max-width: 380px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      padding-left: 4px;
+      border-left: 2px solid #9b5de5;
+      padding-left: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+      max-width: 380px;
+      margin-bottom: 28px;
+    }
+    .grid.single { grid-template-columns: 1fr; }
+
+    .btn {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 14px 16px;
+      background: rgba(0,245,212,0.06);
+      border: 1px solid rgba(0,245,212,0.2);
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+      color: #fff;
+    }
+    .btn:active, .btn:hover {
+      background: rgba(0,245,212,0.12);
+      border-color: rgba(0,245,212,0.5);
+    }
+    .btn .label {
+      font-size: 15px;
+      font-weight: 500;
+      color: #00f5d4;
+      margin-bottom: 3px;
+    }
+    .btn .desc {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      line-height: 1.4;
+    }
+    .btn .time {
+      font-size: 10px;
+      color: #9b5de5;
+      margin-top: 4px;
+    }
+
+    .btn.purple {
+      background: rgba(155,93,229,0.08);
+      border-color: rgba(155,93,229,0.25);
+    }
+    .btn.purple:active, .btn.purple:hover {
+      background: rgba(155,93,229,0.15);
+      border-color: rgba(155,93,229,0.5);
+    }
+    .btn.purple .label { color: #c084fc; }
+
+    .btn.special {
+      background: rgba(255,200,0,0.06);
+      border-color: rgba(255,200,0,0.2);
+    }
+    .btn.special:active, .btn.special:hover {
+      background: rgba(255,200,0,0.12);
+      border-color: rgba(255,200,0,0.5);
+    }
+    .btn.special .label { color: #fcd34d; }
+  </style>
+</head>
+<body>
+  <h1>未知信号源</h1>
+  <div class="subtitle">DEV · 测试入口</div>
+
+  <div class="section-title">章节入口</div>
+  <div class="grid">
+    <a class="btn" href="index.html?entry=ch0">
+      <span class="label">Ch0 · 开场</span>
+      <span class="desc">开场动画 + 初始状态</span>
+      <span class="time">12:00</span>
+    </a>
+    <a class="btn" href="index.html?entry=ch1">
+      <span class="label">Ch1 · 初步线索</span>
+      <span class="desc">通讯记录 + 证据板解锁</span>
+      <span class="time">15:30</span>
+    </a>
+    <a class="btn" href="index.html?entry=ch2">
+      <span class="label">Ch2 · 深入调查</span>
+      <span class="desc">灵波社交平台解锁</span>
+      <span class="time">19:00</span>
+    </a>
+    <a class="btn" href="index.html?entry=ch3">
+      <span class="label">Ch3 · 关键发现</span>
+      <span class="desc">档案 + 推理 Tab 解锁</span>
+      <span class="time">22:30</span>
+    </a>
+    <a class="btn" href="index.html?entry=ch4">
+      <span class="label">Ch4 · 调查僵局</span>
+      <span class="desc">幽灵通讯终端解锁</span>
+      <span class="time">25:03</span>
+    </a>
+    <a class="btn" href="index.html?entry=ch5">
+      <span class="label">Ch5 · 真相揭示</span>
+      <span class="desc">全模块解锁</span>
+      <span class="time">28:00</span>
+    </a>
+  </div>
+
+  <div class="section-title">特殊场景</div>
+  <div class="grid">
+    <a class="btn purple" href="index.html?entry=ending">
+      <span class="label">结局页</span>
+      <span class="desc">EndingPage 直达</span>
+    </a>
+    <a class="btn special" href="index.html?entry=reasoning">
+      <span class="label">是因是果</span>
+      <span class="desc">推理 Tab · 前置推理已满足</span>
+    </a>
+    <a class="btn" href="index.html?entry=chat">
+      <span class="label">星河消息</span>
+      <span class="desc">ChatPage 直达 · 测试发送失败提示</span>
+    </a>
+  </div>
+
+</body>
+</html>

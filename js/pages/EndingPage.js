@@ -22,6 +22,7 @@ import {
 } from '../style/StyleConfig.js';
 
 import { evidenceList } from '../data/story.js';
+import OpeningPage from './OpeningPage.js';
 
 // ====== 色彩常量 ======
 const ENDING_BG = '#050510';
@@ -184,26 +185,28 @@ export class EndingPage extends Scene {
     bgNode.width = this._screenWidth;
     bgNode.height = this._screenHeight;
     bgNode.zIndex = -10;
+    let _bgGlow1 = null, _bgGlow2 = null;
     bgNode._draw = function(ctx) {
       const w = self._screenWidth;
       const h = self._screenHeight;
 
-      // 暗色背景
       ctx.fillStyle = ENDING_BG;
       ctx.fillRect(0, 0, w, h);
 
-      // 微弱的青色环境光
-      const glow1 = ctx.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
-      glow1.addColorStop(0, 'rgba(0, 245, 212, 0.02)');
-      glow1.addColorStop(1, 'transparent');
-      ctx.fillStyle = glow1;
+      if (!_bgGlow1) {
+        _bgGlow1 = ctx.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
+        _bgGlow1.addColorStop(0, 'rgba(0, 245, 212, 0.02)');
+        _bgGlow1.addColorStop(1, 'transparent');
+      }
+      ctx.fillStyle = _bgGlow1;
       ctx.fillRect(0, 0, w, h);
 
-      // 微弱的紫色点缀
-      const glow2 = ctx.createRadialGradient(w * 0.3, h * 0.8, 0, w * 0.3, h * 0.8, w * 0.4);
-      glow2.addColorStop(0, 'rgba(155, 93, 229, 0.02)');
-      glow2.addColorStop(1, 'transparent');
-      ctx.fillStyle = glow2;
+      if (!_bgGlow2) {
+        _bgGlow2 = ctx.createRadialGradient(w * 0.3, h * 0.8, 0, w * 0.3, h * 0.8, w * 0.4);
+        _bgGlow2.addColorStop(0, 'rgba(155, 93, 229, 0.02)');
+        _bgGlow2.addColorStop(1, 'transparent');
+      }
+      ctx.fillStyle = _bgGlow2;
       ctx.fillRect(0, 0, w, h);
     };
     this.addChild(bgNode);
@@ -241,10 +244,12 @@ export class EndingPage extends Scene {
       e.stopPropagation();
     });
     this._dialogueScrollView.on('touchmove', (e) => {
+      if (!this._dialogueScrollView) return;
       this._dialogueScrollView.onTouchMove(e.y - this._dialogueScrollView.y);
       e.stopPropagation();
     });
     this._dialogueScrollView.on('touchend', (e) => {
+      if (!this._dialogueScrollView) return;
       this._dialogueScrollView.onTouchEnd();
       if (!this._dialogueScrollView.didScroll()) {
         this._tapToContinue();
@@ -785,11 +790,43 @@ export class EndingPage extends Scene {
       bubbleNode.height = itemH;
       bubbleNode._bubbleIndex = idx;
 
+      // 预计算描述文字每个字符的 x 坐标和行号（只算一次，避免每帧 measureText）
+      // 需要在 _draw 首次调用时初始化（此时有 ctx），用 _charLayout 缓存
+      bubbleNode._charLayout = null; // { xs: [], ys: [], highlightX, highlightY }
+
       bubbleNode._draw = function(ctx) {
         const w = bubbleWidth;
         const h = itemH;
         const r = 4;
         const b = self._collectBubbles[idx];
+
+        // 预计算字符布局（只算一次）
+        if (!this._charLayout) {
+          const desc = b.desc || '';
+          const maxDescWidth = w - 20;
+          const descY1 = 38;
+          const descY2 = 54;
+          const xs = [];
+          const ys = [];
+          ctx.font = `${11}px ${FONT_PRIMARY}`;
+          let cx = 10;
+          let descLine = 1;
+          let lineY = descY1;
+          for (let ci = 0; ci < desc.length; ci++) {
+            const ch = desc[ci];
+            const cw = ctx.measureText(ch).width;
+            if (cx + cw > maxDescWidth) {
+              if (descLine >= 2) { xs.push(-1); ys.push(-1); continue; }
+              descLine++;
+              lineY = descY2;
+              cx = 10;
+            }
+            xs.push(cx);
+            ys.push(lineY);
+            cx += cw;
+          }
+          this._charLayout = { xs, ys, desc };
+        }
 
         // 边框
         ctx.beginPath();
@@ -809,7 +846,6 @@ export class EndingPage extends Scene {
           ctx.fillStyle = 'rgba(155, 93, 229, 0.01)';
           ctx.globalAlpha = 0.3;
         } else {
-          // 脉冲动画（通过 flashTimer 控制边框颜色）
           const pulse = Math.sin(self._flashTimer * 0.002 + idx) * 0.5 + 0.5;
           const borderR = Math.round(155 * (1 - pulse));
           const borderG = Math.round(93 * (1 - pulse) + 245 * pulse);
@@ -833,44 +869,29 @@ export class EndingPage extends Scene {
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
 
-        // 描述（双行逐字渲染，确保闪烁字可见）
+        // 描述（使用预计算的字符布局，无 measureText）
         ctx.font = `${11}px ${FONT_PRIMARY}`;
-        const desc = b.desc || '';
-        let cx = 10;
-        const descY1 = 38;
-        const descY2 = 54;
-        const maxDescWidth = w - 20;
-        let descLine = 1;
-        let lineY = descY1;
-
+        const layout = this._charLayout;
+        const desc = layout.desc;
         for (let ci = 0; ci < desc.length; ci++) {
-          const ch = desc[ci];
-          const charWidth = ctx.measureText(ch).width;
-
-          if (cx + charWidth > maxDescWidth) {
-            if (descLine >= 2) break; // 最多两行
-            descLine++;
-            lineY = descY2;
-            cx = 10;
-          }
+          const cx = layout.xs[ci];
+          const lineY = layout.ys[ci];
+          if (cx < 0) break; // 超出两行则截断
 
           if (ci === b.charIndex && !b.collected) {
-            // 闪烁字 — 高亮
             const flash = Math.sin(self._flashTimer * 0.005 + idx * 2) * 0.5 + 0.5;
             ctx.fillStyle = RUNE_CYAN;
             ctx.font = `bold ${12}px ${FONT_PRIMARY}`;
             ctx.shadowColor = `rgba(0, 245, 212, ${0.3 + flash * 0.5})`;
             ctx.shadowBlur = (4 + flash * 8);
-            ctx.fillText(ch, cx, lineY);
+            ctx.fillText(desc[ci], cx, lineY);
             ctx.shadowColor = 'transparent';
             ctx.shadowBlur = 0;
             ctx.font = `${11}px ${FONT_PRIMARY}`;
           } else {
             ctx.fillStyle = TEXT_DIM;
-            ctx.fillText(ch, cx, lineY);
+            ctx.fillText(desc[ci], cx, lineY);
           }
-
-          cx += charWidth;
         }
 
         // 已收集覆盖层
@@ -880,7 +901,6 @@ export class EndingPage extends Scene {
           ctx.fillRect(0, 0, w, h);
           ctx.globalAlpha = 1;
 
-          // 收集的字符
           ctx.font = `${20}px ${FONT_PRIMARY}`;
           ctx.fillStyle = RUNE_CYAN;
           ctx.textAlign = 'center';
@@ -892,6 +912,10 @@ export class EndingPage extends Scene {
           ctx.globalAlpha = 1;
         }
       };
+
+      // 让节点本身可交互，直接接收 tap 事件（避免依赖 didScroll 阈值导致误判）
+      bubbleNode.interactive = true;
+      bubbleNode.on('tap', () => this._tapCollectBubble(idx));
 
       // 入场动画
       bubbleNode.alpha = 0;
@@ -1216,7 +1240,7 @@ export class EndingPage extends Scene {
     curY += 44;
 
     const subtitleLabel = new Label({
-      text: 'UNKNOWN SIGNAL SOURCE',
+      text: 'UNKNOWN SIGNAL',
       fontSize: 10,
       color: TEXT_DIM,
       textAlign: 'center',
@@ -1278,9 +1302,9 @@ export class EndingPage extends Scene {
     };
 
     curY = addGlowLine(curY);
-    curY = addSection('制作', ['GinnyW'], curY);
+    curY = addSection('制作', ['小金'], curY);
     curY = addGlowLine(curY);
-    curY = addSection('协作', ['Claude, Gemini'], curY);
+    curY = addSection('协作', ['Claude, Gemini, GPT'], curY);
     curY = addGlowLine(curY);
     curY = addSection('特别感谢', ['Yana','AdrainH', 'B4C5'], curY);
     curY = addGlowLine(curY);
@@ -1361,7 +1385,24 @@ export class EndingPage extends Scene {
     homeBtn.interactive = true;
     homeBtn.on('tap', () => this._goHome());
     this._creditsScrollView.addChild(homeBtn);
-    curY += 80;
+    curY += 52;
+
+    // 重新开始按钮
+    const restartBtn = new Button({
+      text: '重新开始',
+      fontSize: 13,
+      fontColor: TEXT_DIM,
+      bgColor: 'transparent',
+      borderColor: 'rgba(255,255,255,0.15)',
+      width: 120,
+      height: 36,
+    });
+    restartBtn.x = (this._screenWidth - 120) / 2;
+    restartBtn.y = curY;
+    restartBtn.interactive = true;
+    restartBtn.on('tap', () => this._restartGame());
+    this._creditsScrollView.addChild(restartBtn);
+    curY += 60;
 
     this._creditsScrollView.contentHeight = curY;
 
@@ -1432,8 +1473,8 @@ export class EndingPage extends Scene {
   _shareGame() {
     try {
       wx.shareAppMessage({
-        title: '我破解了一桩跨维度谋杀案——《未知信号源》',
-        imageUrl: 'res/images/share_card.png',
+        title: '那边的人，能看到这条消息吗？',
+        imageUrl: 'https://mmocgame.qpic.cn/wechatgame/BE1I0ibxriaQHIqDe5vNbGxGSWaaYbNz8vSwxSnKvwNDDw7kicwPcY0IYK06GEpSSF2/0',
         query: '',
       });
     } catch (e) { /* ignore */ }
@@ -1513,6 +1554,26 @@ export class EndingPage extends Scene {
         this.engine.popScene();
       }
     }
+  }
+
+  _restartGame() {
+    try {
+      wx.showModal({
+        title: '重新开始',
+        content: '将清除所有进度，从头开始游戏。',
+        confirmText: '确认',
+        cancelText: '取消',
+        success: (res) => {
+          if (res.confirm) {
+            gameState.reset();
+            try { wx.removeStorageSync('ghost_portal_animated'); } catch (e) {}
+            try { wx.removeStorageSync('ghost_chat_progress'); } catch (e) {}
+            try { wx.removeStorageSync('chat_messages_history'); } catch (e) {}
+            if (this.engine) this.engine.replaceScene(new OpeningPage());
+          }
+        },
+      });
+    } catch (e) {}
   }
 
   // ==================== 每帧更新 ====================

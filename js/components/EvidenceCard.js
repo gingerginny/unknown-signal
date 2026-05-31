@@ -63,6 +63,13 @@ export default class EvidenceCard extends Node {
     this._cachedCardH = 0;
     this._cachedWidth = 0;
     this._cachedDesc = '';
+
+    // gradient 缓存（静态，只在尺寸变化时重建）
+    this._cachedBgGrad = null;
+    this._cachedScanGrad = null;
+    this._cachedLineGrad = null;
+    this._cachedGradW = 0;
+    this._cachedGradH = 0;
   }
 
   /**
@@ -148,23 +155,36 @@ export default class EvidenceCard extends Node {
       ctx.restore();
     }
 
+    // 重建 gradient 缓存（仅在尺寸变化时）
+    if (this._cachedGradW !== w || this._cachedGradH !== cardH) {
+      this._cachedBgGrad = ctx.createLinearGradient(0, 0, w, cardH);
+      this._cachedBgGrad.addColorStop(0, 'rgba(10, 20, 22, 0.92)');
+      this._cachedBgGrad.addColorStop(1, 'rgba(6, 14, 16, 0.96)');
+
+      this._cachedScanGrad = ctx.createLinearGradient(0, 0, 0, cardH);
+      this._cachedScanGrad.addColorStop(0,   'rgba(255,255,255,0.015)');
+      this._cachedScanGrad.addColorStop(0.5, 'rgba(255,255,255,0.005)');
+      this._cachedScanGrad.addColorStop(1,   'rgba(255,255,255,0.015)');
+
+      this._cachedLineGrad = ctx.createLinearGradient(w * 0.1, 0, w * 0.9, 0);
+      this._cachedLineGrad.addColorStop(0, 'transparent');
+      this._cachedLineGrad.addColorStop(0.5, 'rgba(0, 245, 212, 0.2)');
+      this._cachedLineGrad.addColorStop(1, 'transparent');
+
+      this._cachedGradW = w;
+      this._cachedGradH = cardH;
+    }
+
     // 1. 切角背景
     this._clipPath(ctx, 0, 0, w, cardH, cut);
-    const bgGrad = ctx.createLinearGradient(0, 0, w, cardH);
-    bgGrad.addColorStop(0, 'rgba(10, 20, 22, 0.92)');
-    bgGrad.addColorStop(1, 'rgba(6, 14, 16, 0.96)');
-    ctx.fillStyle = bgGrad;
+    ctx.fillStyle = this._cachedBgGrad;
     ctx.fill();
 
-    // 2. 扫描线纹理（单次渐变遮罩替代逐行 loop）
+    // 2. 扫描线纹理
     ctx.save();
     this._clipPath(ctx, 0, 0, w, cardH, cut);
     ctx.clip();
-    const scanGrad = ctx.createLinearGradient(0, 0, 0, cardH);
-    scanGrad.addColorStop(0,   'rgba(255,255,255,0.015)');
-    scanGrad.addColorStop(0.5, 'rgba(255,255,255,0.005)');
-    scanGrad.addColorStop(1,   'rgba(255,255,255,0.015)');
-    ctx.fillStyle = scanGrad;
+    ctx.fillStyle = this._cachedScanGrad;
     ctx.fillRect(0, 0, w, cardH);
     ctx.restore();
 
@@ -177,11 +197,7 @@ export default class EvidenceCard extends Node {
 
     // 4. 底部发光线
     ctx.save();
-    const lineGrad = ctx.createLinearGradient(w * 0.1, 0, w * 0.9, 0);
-    lineGrad.addColorStop(0, 'transparent');
-    lineGrad.addColorStop(0.5, `rgba(0, 245, 212, 0.2)`);
-    lineGrad.addColorStop(1, 'transparent');
-    ctx.strokeStyle = lineGrad;
+    ctx.strokeStyle = this._cachedLineGrad;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(w * 0.1, cardH - 1);

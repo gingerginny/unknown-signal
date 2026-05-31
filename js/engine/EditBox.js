@@ -194,46 +194,48 @@ export class EditBox extends Node {
       if (this._isFocused) this.blur();
     };
 
-    if (typeof wx.createInput === 'function') {
-      // ---- 方案A：createInput 叠加原生输入框 ----
-      const worldPos = this.getWorldPosition();
-      this._nativeInput = wx.createInput({
-        x: worldPos.x,
-        y: worldPos.y,
-        width: this.width,
-        height: this.height,
-        defaultValue: this.text,
-        type: 'text',
-        placeholder: this.placeholder,
-        maxlength: this.maxLength,
-        confirmType: 'send',
-        confirmHold: false,
-        adjustPosition: true,
-        style: {
-          color: this.color,
-          fontSize: `${this.fontSize}px`,
-          backgroundColor: 'transparent',
-          borderWidth: '0',
-          padding: `0 ${this.paddingX}px`,
-        },
-      });
-      this._nativeInput.onKeyboardInput(this._onInputCallback);
-      this._nativeInput.onKeyboardConfirm(this._onConfirmCallback);
-      this._nativeInput.onKeyboardComplete(this._onKeyboardCompleteCallback);
-      this._nativeInput.focus();
-    } else {
-      // ---- 方案B：降级到 showKeyboard ----
-      wx.onKeyboardInput(this._onInputCallback);
-      wx.onKeyboardConfirm && wx.onKeyboardConfirm(this._onConfirmCallback);
-      wx.onKeyboardComplete(this._onKeyboardCompleteCallback);
-      wx.showKeyboard({
-        defaultValue: this.text,
-        maxLength: this.maxLength,
-        multiple: false,
-        confirmHold: false,
-        confirmType: 'done',
-      });
-    }
+    // 浏览器方案：透明 HTML input 覆盖在 Canvas 对应位置，Canvas 负责视觉渲染
+    const worldPos = this.getWorldPosition();
+    const gameCanvas = window._gameCanvas || document.querySelector('canvas');
+    const rect = gameCanvas ? gameCanvas.getBoundingClientRect() : { left: 0, top: 0 };
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = this.text;
+    input.maxLength = this.maxLength;
+    input.style.cssText = `
+      position: fixed;
+      left: ${rect.left + worldPos.x}px;
+      top: ${rect.top + worldPos.y}px;
+      width: ${this.width}px;
+      height: ${this.height}px;
+      opacity: 0;
+      z-index: 9999;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: ${this.fontSize}px;
+      padding: 0 ${this.paddingX}px;
+    `;
+
+    input.addEventListener('input', (e) => {
+      this._onInputCallback({ value: e.target.value });
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this._onConfirmCallback({ value: input.value });
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      this._onKeyboardCompleteCallback();
+    });
+
+    document.body.appendChild(input);
+    this._nativeInput = input;
+    // 延迟 focus 确保 DOM 已挂载
+    setTimeout(() => input.focus(), 50);
   }
 
   /**
@@ -253,19 +255,11 @@ export class EditBox extends Node {
     this._cursorVisible = false;
 
     if (this._nativeInput) {
-      // 方案A 清理
-      if (this._onInputCallback) this._nativeInput.offKeyboardInput(this._onInputCallback);
-      if (this._onConfirmCallback) this._nativeInput.offKeyboardConfirm(this._onConfirmCallback);
-      if (this._onKeyboardCompleteCallback) this._nativeInput.offKeyboardComplete(this._onKeyboardCompleteCallback);
-      this._nativeInput.blur();
-      this._nativeInput.destroy();
+      // 移除 HTML input 覆盖层
+      if (this._nativeInput.parentNode) {
+        this._nativeInput.parentNode.removeChild(this._nativeInput);
+      }
       this._nativeInput = null;
-    } else {
-      // 方案B 清理
-      if (this._onInputCallback) wx.offKeyboardInput(this._onInputCallback);
-      if (this._onConfirmCallback) wx.offKeyboardConfirm && wx.offKeyboardConfirm(this._onConfirmCallback);
-      if (this._onKeyboardCompleteCallback) wx.offKeyboardComplete(this._onKeyboardCompleteCallback);
-      wx.hideKeyboard({});
     }
 
     this._onInputCallback = null;

@@ -121,11 +121,6 @@ export default class MainPage extends Scene {
     // 解锁模块列表
     this._unlockedModules = ['chat'];
 
-    // 调试模式
-    this._devMode = false;
-    this._devLongPressTimer = null;
-    this._devTouchStartX = 0;
-    this._devTouchStartY = 0;
   }
 
   /**
@@ -194,7 +189,6 @@ export default class MainPage extends Scene {
   onExit() {
     if (this._ghostTimer1) { clearTimeout(this._ghostTimer1); this._ghostTimer1 = null; }
     if (this._ghostTimer2) { clearTimeout(this._ghostTimer2); this._ghostTimer2 = null; }
-    if (this._devLongPressTimer) { clearTimeout(this._devLongPressTimer); this._devLongPressTimer = null; }
     Tween.stopAll(this);
   }
 
@@ -230,12 +224,15 @@ export default class MainPage extends Scene {
     this._gameTime = gameState.getGameTime();
     this._notesUnlocked = this._unlockedModules.includes('notes');
 
-    // 幽灵入口在玩家看完 ch4_recover 消息（进入过临时通讯）后才出现
-    const ch4RecoverSeen = (() => {
-      try { const p = wx.getStorageSync('chat_last_played'); return typeof p === 'number' && p >= 4; } catch (e) { return false; }
-    })();
-    const shouldShowGhost = this._unlockedModules.includes('encrypted_chat') && ch4RecoverSeen;
+    const shouldShowGhost = this._unlockedModules.includes('encrypted_chat');
     const ghostAnimated = !!wx.getStorageSync('ghost_portal_animated');
+
+    // ch4_recover 是否已被玩家看完（chat_last_played >= 4）
+    let ch4RecoverRead = false;
+    try {
+      const lp = wx.getStorageSync('chat_last_played');
+      ch4RecoverRead = typeof lp === 'number' && lp >= 4;
+    } catch (e) {}
 
     this._showGhostPortal = shouldShowGhost && ghostAnimated;
     this._portalMode = this._unlockedModules.includes('encrypted_zone') ? 'ending' : 'ghost';
@@ -247,8 +244,8 @@ export default class MainPage extends Scene {
     this._pinInput = '';
     this._pinError = false;
 
-    // ch4 幽灵首次出现动画
-    if (shouldShowGhost && !ghostAnimated) {
+    // ch4 幽灵首次出现动画：需等 ch4_recover 对话被玩家读完后才触发
+    if (shouldShowGhost && !ghostAnimated && ch4RecoverRead) {
       this._playGhostEntrance();
     }
   }
@@ -380,8 +377,6 @@ export default class MainPage extends Scene {
       this._glitchEffect.render(ctx);
     }
 
-    // 7. DEV 调试面板（最高层）
-    this._drawDevPanel(ctx);
   }
 
   /**
@@ -1471,18 +1466,6 @@ export default class MainPage extends Scene {
     const touch = event.changedTouches[0];
     const { x, y } = touch;
 
-    // 长按导航栏区域触发 DEV 模式
-    if (y <= this._navHeight) {
-      this._devTouchStartX = x;
-      this._devTouchStartY = y;
-      if (this._devLongPressTimer) clearTimeout(this._devLongPressTimer);
-      this._devLongPressTimer = setTimeout(() => {
-        this._devMode = !this._devMode;
-        this._devLongPressTimer = null;
-        try { wx.vibrateShort({ type: 'medium' }); } catch (e) {}
-      }, 1500);
-    }
-
     // 在内容区域开始拖拽
     if (y > this._navHeight && y < this._screenH - 20) {
       this._isDragging = true;
@@ -1493,16 +1476,6 @@ export default class MainPage extends Scene {
 
   onTouchMove(event) {
     super.onTouchMove(event);
-    // 移动超过阈值才取消长按（真机手指静止时仍有微小抖动，需容差 8px）
-    if (this._devLongPressTimer && event.changedTouches.length > 0) {
-      const t = event.changedTouches[0];
-      const dx = Math.abs(t.x - this._devTouchStartX);
-      const dy = Math.abs(t.y - this._devTouchStartY);
-      if (dx > 8 || dy > 8) {
-        clearTimeout(this._devLongPressTimer);
-        this._devLongPressTimer = null;
-      }
-    }
     if (!this._isDragging || event.changedTouches.length === 0) return;
 
     const touch = event.changedTouches[0];
@@ -1518,11 +1491,6 @@ export default class MainPage extends Scene {
 
   onTouchEnd(event) {
     super.onTouchEnd(event);
-    // 清除长按定时器
-    if (this._devLongPressTimer) {
-      clearTimeout(this._devLongPressTimer);
-      this._devLongPressTimer = null;
-    }
     if (event.changedTouches.length === 0) return;
 
     const touch = event.changedTouches[0];
@@ -1556,11 +1524,6 @@ export default class MainPage extends Scene {
    * @private
    */
   _handleTap(x, y) {
-    // DEV 面板点击处理（优先级最高）
-    if (this._devMode) {
-      if (this._handleDevTap(x, y)) return;
-    }
-
     // 当前是桌面屏
     if (this._currentScreen === 0) {
       // 检测应用卡片点击
@@ -1766,299 +1729,6 @@ export default class MainPage extends Scene {
         }
       },
     });
-  }
-
-  // ==================== DEV 调试面板 ====================
-
-  /**
-   * 绘制 DEV 面板
-   * @private
-   */
-  _drawDevPanel(ctx) {
-    if (!this._devMode) return;
-
-    const W = this._screenW;
-    const H = this._screenH;
-    const panelW = W - 40;
-    const panelH = 308;
-    const panelX = 20;
-    const panelY = (H - panelH) / 2;
-
-    // 遮罩
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, W, H);
-
-    // 面板背景
-    ctx.fillStyle = 'rgba(10, 14, 39, 0.97)';
-    ctx.fillRect(panelX, panelY, panelW, panelH);
-    ctx.strokeStyle = RUNE_CYAN;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(panelX, panelY, panelW, panelH);
-
-    // 标题
-    ctx.font = `bold 14px ${FONT_MONO}`;
-    ctx.fillStyle = RUNE_CYAN;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('⚙ DEV MODE', W / 2, panelY + 22);
-
-    // 关闭按钮
-    ctx.fillStyle = 'rgba(255, 100, 100, 0.8)';
-    ctx.font = `16px ${FONT_PRIMARY}`;
-    ctx.fillText('×', panelX + panelW - 16, panelY + 22);
-
-    // 章节按钮（2行3列）
-    const btnW = (panelW - 60) / 3;
-    const btnH = 36;
-    const startX = panelX + 20;
-    let startY = panelY + 50;
-
-    ctx.font = `12px ${FONT_MONO}`;
-    const state = gameState.get();
-    const currentCh = state.chapter || 0;
-
-    for (let i = 0; i <= 5; i++) {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      const bx = startX + col * (btnW + 10);
-      const by = startY + row * (btnH + 10);
-
-      // 当前章节高亮
-      const isActive = i === currentCh;
-      ctx.fillStyle = isActive ? 'rgba(0, 245, 212, 0.15)' : 'rgba(255, 255, 255, 0.04)';
-      ctx.fillRect(bx, by, btnW, btnH);
-      ctx.strokeStyle = isActive ? RUNE_CYAN : 'rgba(0, 245, 212, 0.2)';
-      ctx.lineWidth = isActive ? 1.5 : 0.5;
-      ctx.strokeRect(bx, by, btnW, btnH);
-
-      ctx.fillStyle = isActive ? RUNE_CYAN : TEXT_PRIMARY;
-      ctx.textAlign = 'center';
-      ctx.fillText(`CH ${i}`, bx + btnW / 2, by + btnH / 2);
-    }
-
-    // 功能按钮行
-    const funcY = startY + 2 * (btnH + 10) + 16;
-    const funcBtnW = (panelW - 50) / 3;
-
-    // 重置按钮
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
-    ctx.fillRect(startX, funcY, funcBtnW, btnH);
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(startX, funcY, funcBtnW, btnH);
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
-    ctx.fillText('重置', startX + funcBtnW / 2, funcY + btnH / 2);
-
-    // Ending 按钮
-    const endingX = startX + funcBtnW + 10;
-    ctx.fillStyle = 'rgba(155, 93, 229, 0.12)';
-    ctx.fillRect(endingX, funcY, funcBtnW, btnH);
-    ctx.strokeStyle = 'rgba(155, 93, 229, 0.5)';
-    ctx.strokeRect(endingX, funcY, funcBtnW, btnH);
-    ctx.fillStyle = 'rgba(155, 93, 229, 0.9)';
-    ctx.fillText('Ending', endingX + funcBtnW / 2, funcY + btnH / 2);
-
-    // 关闭按钮
-    const closeX = endingX + funcBtnW + 10;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-    ctx.fillRect(closeX, funcY, funcBtnW, btnH);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.strokeRect(closeX, funcY, funcBtnW, btnH);
-    ctx.fillStyle = TEXT_DIM;
-    ctx.fillText('关闭', closeX + funcBtnW / 2, funcY + btnH / 2);
-
-    // 封锁测试按钮（独占一行）
-    const testY = funcY + btnH + 10;
-    const testBtnW = panelW - 40;
-    ctx.fillStyle = 'rgba(255, 60, 60, 0.08)';
-    ctx.fillRect(startX, testY, testBtnW, btnH);
-    ctx.strokeStyle = 'rgba(255, 60, 60, 0.4)';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(startX, testY, testBtnW, btnH);
-    ctx.fillStyle = 'rgba(255, 80, 80, 0.9)';
-    ctx.textAlign = 'center';
-    ctx.fillText('⚠ 封锁测试（差是因是果一步）', startX + testBtnW / 2, testY + btnH / 2);
-
-    // 当前状态信息
-    const infoY = testY + btnH + 10;
-    ctx.font = `10px ${FONT_MONO}`;
-    ctx.fillStyle = TEXT_DIM;
-    ctx.textAlign = 'left';
-    ctx.fillText(`CH:${currentCh}  证据:${this._evidenceCount}  时间:${this._gameTime}`, startX, infoY);
-
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.restore();
-
-    // 缓存面板区域用于触摸检测
-    this._devPanelRect = { x: panelX, y: panelY, w: panelW, h: panelH };
-  }
-
-  /**
-   * 处理 DEV 面板点击
-   * @private
-   * @returns {boolean} 是否已处理
-   */
-  _handleDevTap(x, y) {
-    if (!this._devPanelRect) return false;
-
-    const { x: px, y: py, w: pw, h: ph } = this._devPanelRect;
-
-    // 点击面板外 → 关闭
-    if (x < px || x > px + pw || y < py || y > py + ph) {
-      this._devMode = false;
-      return true;
-    }
-
-    // 关闭按钮（右上角）
-    if (x > px + pw - 30 && y < py + 36) {
-      this._devMode = false;
-      return true;
-    }
-
-    // 章节按钮区域
-    const btnW = (pw - 60) / 3;
-    const btnH = 36;
-    const startX = px + 20;
-    const startY = py + 50;
-
-    for (let i = 0; i <= 5; i++) {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      const bx = startX + col * (btnW + 10);
-      const by = startY + row * (btnH + 10);
-
-      if (x >= bx && x <= bx + btnW && y >= by && y <= by + btnH) {
-        this._jumpToChapter(i);
-        return true;
-      }
-    }
-
-    // 功能按钮行
-    const funcY = startY + 2 * (btnH + 10) + 16;
-    const funcBtnW = (pw - 50) / 3;
-
-    // 重置按钮
-    if (x >= startX && x <= startX + funcBtnW && y >= funcY && y <= funcY + btnH) {
-      gameState.reset();
-      try { wx.removeStorageSync('ghost_portal_animated'); } catch (e) {}
-      this._devMode = false;
-      this.engine.replaceScene(new OpeningPage());
-      return true;
-    }
-
-    // Ending 按钮
-    const endingX = startX + funcBtnW + 10;
-    if (x >= endingX && x <= endingX + funcBtnW && y >= funcY && y <= funcY + btnH) {
-      this._jumpToChapter(5);
-      gameState.setChoice('endingComplete', true);
-      this._devMode = false;
-      this.engine.pushScene(new EndingPage());
-      return true;
-    }
-
-    // 关闭按钮
-    const closeX = endingX + funcBtnW + 10;
-    if (x >= closeX && x <= closeX + funcBtnW && y >= funcY && y <= funcY + btnH) {
-      this._devMode = false;
-      return true;
-    }
-
-    // 封锁测试按钮
-    const testY = funcY + btnH + 10;
-    const testBtnW = pw - 40;
-    if (x >= startX && x <= startX + testBtnW && y >= testY && y <= testY + btnH) {
-      this._jumpToLockdownTest();
-      return true;
-    }
-
-    return true; // 面板内点击已消费
-  }
-
-  /**
-   * 快速跳到指定章节（移植自旧版小程序）
-   * @private
-   * @param {number} chapter - 目标章节（0-5）
-   */
-  _jumpToChapter(chapter) {
-    if (chapter < 0 || chapter > 5) return;
-
-    // 重置后逐章推进到目标章节（确保每章模块都正确解锁）
-    gameState.reset();
-    try { wx.removeStorageSync('ghost_portal_animated'); } catch (e) {}
-    for (let ch = 1; ch <= chapter; ch++) {
-      gameState.advanceChapter(ch);
-    }
-    // 设置 chatProgress 以跳过之前章节的对话
-    gameState.setChatProgress(chapter);
-    // 标记 opening 已完成
-    if (chapter > 0) {
-      gameState.update({ isOpeningDone: true });
-    }
-
-    // 自动注入当前章节及之前章节的证据
-    if (chapter > 0) {
-      Object.keys(evidenceList).forEach(id => {
-        if (evidenceList[id].chapter < chapter) {
-          gameState.collectEvidence(id);
-          gameState.markEvidenceSearched(id);
-        }
-      });
-      // 标记页面已访问（跳过门控）
-      gameState.markPageVisited('records');
-      gameState.markPageVisited('evidence');
-      try { wx.setStorageSync('ch0_followup_played', true); } catch (e) {}
-    }
-
-    // ch1+: 解锁通讯记录内容
-    if (chapter >= 1) {
-      gameState.update({ ch1ContentUnlocked: true });
-    }
-
-    // ch2+: 标记灵波社交页已访问
-    if (chapter >= 2) {
-      gameState.markPageVisited('social');
-    }
-
-    // ch4+: 自动注入推理结果
-    if (chapter >= 4) {
-      reasoningCombos.forEach(combo => {
-        gameState.addReasoningResult(combo.resultId);
-      });
-    }
-
-    // ch5: 标记加密笔记已读
-    if (chapter >= 5) {
-      for (let i = 1; i <= 8; i++) {
-        gameState.markEncryptedNoteViewed('encrypted_note_' + i);
-      }
-    }
-
-    this._refreshState();
-    try {
-      wx.showToast({ title: '已跳转到 ch' + chapter, icon: 'none', duration: 1000 });
-    } catch (e) {}
-  }
-
-  /** DEV 快速进入封锁测试状态：ch3 全证据 + 所有推理结论（除 cause_and_effect），直接打开推理 Tab */
-  _jumpToLockdownTest() {
-    this._jumpToChapter(3);
-    // 注入除 cause_and_effect 之外的所有推理结论
-    reasoningCombos.forEach(combo => {
-      if (combo.resultId !== 'cause_and_effect') {
-        gameState.addReasoningResult(combo.resultId);
-      }
-    });
-    // 收集 cause_and_effect 所需的前置词条（cross_dim_comm、leap_framework）
-    gameState.collectEvidence('cross_dim_comm');
-    gameState.collectEvidence('leap_framework');
-    this._devMode = false;
-    this._refreshState();
-    this.engine.pushScene(new EvidencePage({ initialTab: 'reasoning' }));
-    try {
-      wx.showToast({ title: '封锁测试：推理 Tab 已就绪', icon: 'none', duration: 1200 });
-    } catch (e) {}
   }
 
   // ==================== 幽灵入场动画 ====================

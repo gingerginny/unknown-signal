@@ -39,7 +39,7 @@ const CH1_KEYWORDS = [
   'fasi_archive_dept', 'self_defense', 'tree_monitor_bureau',
 ];
 const CH2_KEYWORDS = [
-  'qiqi', 'dual_moon', 'lingbo',
+  'qiqi', 'dual_moon', 'lingbo', 'weizi_cluster',
 ];
 const CHAPTER_TRIGGERS = {
   2: CH0_KEYWORDS.concat(CH1_KEYWORDS),
@@ -327,13 +327,14 @@ const gameState = {
   // --- 未读消息检测（供其他页面返回按钮红点使用） ---
   hasUnreadChat() {
     if (!_state) this.init();
-    if (_state.chapter > 4) return false;
-    // ch4：ch4_recover 未播放时仍显示红点
+    // ch5+ 不再推送消息
+    if (_state.chapter >= 5) return false;
+    // ch4：ch4_recover 未播放时显示红点
     if (_state.chapter === 4) {
       try {
-        const lastPlayed = wx.getStorageSync('chat_last_played');
-        return typeof lastPlayed !== 'number' || lastPlayed < 4;
-      } catch (e) { return false; }
+        const lp = wx.getStorageSync('chat_last_played');
+        return typeof lp !== 'number' || lp < 4;
+      } catch (e) { return true; }
     }
     try {
       // 检查是否有延迟消息已到期

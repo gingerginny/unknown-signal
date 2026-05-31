@@ -34,6 +34,23 @@ import {
 } from '../style/StyleConfig.js';
 import { drawGlowText, drawGlowLine, drawGlowRect, drawGlowCircle } from '../effects/GlowEffect.js';
 
+// ====== 推理球体干扰线索 ======
+// 已收集但不参与任何推理组合的词条，作为干扰项展示在球面
+const REASONING_DISTRACTORS = [
+  'parallel_universe',   // 平行宇宙
+  'world_tree',          // 万灵树
+  'surveillance',        // 监控档案
+  'energy_anomaly',      // 灵能异常记录
+  'qiqi',                // 七七
+  'old_world',           // 旧万界
+  'universe_coordinate', // 宇宙坐标（时空维度标识体系）
+  'universe_1124',       // 1124宇宙（跨维案发地点）
+  'weizi',               // 微子（万界时空基础物质）
+  'communicator',        // 通讯仪（案件核心道具，迷惑性强）
+  'lingbo',              // 灵波（社交平台，似乎藏有线索）
+  'dual_moon',           // 双月重叠（案发时间节点，迷惑性强）
+];
+
 // ====== 3D 球体参数 ======
 const SPHERE_RADIUS = 110;        // 逻辑像素半径
 const SPHERE_CENTER_X = 150;      // 球心 X（容器内）
@@ -60,7 +77,7 @@ const RESULT_IMAGE_MAP = {
 };
 
 export class EvidencePage extends Scene {
-  constructor({ initialTab } = {}) {
+  constructor() {
     super();
 
     // 屏幕尺寸
@@ -69,7 +86,7 @@ export class EvidencePage extends Scene {
     this._statusBarHeight = 0;
 
     // ===== Tab 切换 =====
-    this._currentTab = initialTab || 'clues';   // 'clues' | 'reasoning'
+    this._currentTab = 'clues';   // 'clues' | 'reasoning'
     this._showReasoningTab = false;
     this._tabUnderlineX = 0;      // Tab 下划线 X 位置（动画用）
 
@@ -129,6 +146,9 @@ export class EvidencePage extends Scene {
     this._missingMsgAlpha = 0;
     this._missingMsgTimer = 0;
     this._missingMsgText = '';
+
+    // 提示延迟：Toast 播完后再触发紫色提示框
+    this._hintDelayTimer = 0;
     this._missingDeathGravityCount = 0;
 
     // 球体旋转状态
@@ -146,19 +166,18 @@ export class EvidencePage extends Scene {
 
     // 推理结果弹窗
     this._showResultOverlay = false;
+    this._resultCloseBtnRect = null;  // 关闭按钮命中区域 {x,y,w,h}
     this._resultTitle = '';
     this._resultFullText = '';
     this._resultDisplayText = '';
     this._resultTypingIndex = 0;
     this._resultTypingTimer = 0;
-    this._resultCloseBtnRect = null; // { x, y, w, h }
+    this._resultOverlayCache = null;  // 静态内容缓存
 
     // 气泡预览弹窗
     this._showBubblePreview = false;
     this._previewBubble = null;
     this._previewAlpha = 0;
-    this._previewCardRect = null;     // { x, y, w, h } 底部卡片区域
-    this._previewSelectBtnRect = null; // { x, y, w, h } 选择按钮区域
 
     // 逻辑链路
     this._logicChain = [];
@@ -197,7 +216,6 @@ export class EvidencePage extends Scene {
     this._lockdownActive = false;
     this._lockdownTimer = 0;
     this._pendingLockdown = false;
-    this._lockdownPhaseDone = false;
     this._lockdownBanner1Y = -70;
     this._lockdownBanner1Alpha = 0;
     this._lockdownBanner2Y = -70;
@@ -238,6 +256,11 @@ export class EvidencePage extends Scene {
 
     // 构建 UI
     this._buildUI();
+
+    // 测试入口：直接跳推理 Tab
+    if (this._startOnReasoningTab && this._showReasoningTab) {
+      this._switchTab('reasoning');
+    }
   }
 
   onResume() {
@@ -580,7 +603,7 @@ export class EvidencePage extends Scene {
     this._updateClueScrollLayout();
   }
 
-  /** 点击已收集词条 → 快速搜索 */
+  /** 点击已收集词条 → 复用搜索面板（与搜索框一套逻辑） */
   _quickSearch(name, id) {
     if (!name) return;
     if (id) {
@@ -588,24 +611,10 @@ export class EvidencePage extends Scene {
       const card = this._evidenceCards.find(c => c._id === id);
       if (card) card.setNew(false);
     }
-    // 查找搜索结果文本（不展开搜索面板）
-    const entry = searchDB[name];
-    let detailText = '';
-    if (entry && entry.result) {
-      detailText = entry.result;
-      if (entry.evidenceId) gameState.markEvidenceSearched(entry.evidenceId);
-    } else if (id && evidenceList[id]) {
-      detailText = evidenceList[id].desc || '';
-    }
-
-    // 显示浮层详情卡片
-    this._cardDetailName = name;
-    this._cardDetailText = detailText;
-    this._cardDetailVisible = true;
-
-    // 浮层固定在内容区顶部，不改变 scrollY（被点击词条保留原位）
-    this._cardDetailOverlayY = this._getContentTop();
-    this._isDirty = true;
+    // 填充搜索框并触发检索，结果在搜索面板中显示（含完整滚动）
+    this._searchQuery = name;
+    if (this._searchEditBox) this._searchEditBox.text = name;
+    this._onSearch();
   }
 
   /** 计算浮层详情卡片高度（预估，与搜索面板一致） */
@@ -677,11 +686,11 @@ export class EvidencePage extends Scene {
     ctx.fillStyle = 'rgba(0, 245, 212, 0.85)';
     ctx.fillText(this._cardDetailName, panelX + 28, headerY);
 
-    // 关闭提示（右侧）
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    // 关闭按钮（右侧，点击区域 panelW-80 ~ panelW，高度 0~26）
+    ctx.fillStyle = 'rgba(0, 245, 212, 0.6)';
     ctx.font = `${11}px ${FONT_MONO}`;
     ctx.textAlign = 'right';
-    ctx.fillText('\u70b9\u51fb\u5173\u95ed \u00d7', panelX + panelW - 8, headerY); // 点击关闭 ×
+    ctx.fillText('[ 关闭 ]', panelX + panelW - 8, headerY);
     ctx.textAlign = 'left';
 
     // ── 分隔线（与搜索面板结果区 divider 一致）──
@@ -790,30 +799,24 @@ export class EvidencePage extends Scene {
     const reasoningResults = state.reasoningResults || [];
 
     // 排除人名/机构名/世界观背景词条（保留有推理价值的干扰项）
-    const SPHERE_EXCLUDE = new Set([
-      'xinghe', 'alias_profile',           // 人名
-      'order_bureau', 'fasi_archive_dept', 'tree_monitor_bureau', // 机构（不参与推理）
-      'universe_1124',                                             // 背景坐标
-      'wu_xiaowu', 'shen_chi', 'yu_zhi', 'chen_an', 'qiqi',      // 人名
-      'dual_moon', 'lingbo',               // 背景平台/节日
-      'old_world', 'new_world_era',        // 历史背景
-      // 'communicator', 'parallel_universe', 'universe_coordinate' 保留为干扰项
-    ]);
+    // 参与推理组合的证据 ID 集合（球体只显示这些，过滤人名/机构/背景词条）
+    const reasoningIds = new Set();
+    reasoningCombos.forEach(combo => combo.ids.forEach(id => reasoningIds.add(id)));
 
     const items = [];
 
-    // 已收集的证据词条（过滤纯背景词条）
+    // 已收集的证据词条（推理组合词条 + 干扰词条）
     collectedIds.forEach(id => {
-      if (evidenceList[id] && !SPHERE_EXCLUDE.has(id)) {
+      if (!evidenceList[id]) return;
+      if (reasoningIds.has(id) || REASONING_DISTRACTORS.includes(id)) {
         items.push({
           id,
           name: evidenceList[id].name,
-          desc: evidenceList[id].desc || '\u6682\u65E0\u8BE6\u7EC6\u4FE1\u606F',
+          desc: evidenceList[id].desc || '',
           type: 'evidence',
         });
       }
     });
-
     // 已产出的推理结论
     reasoningResults.forEach(resultId => {
       const combo = reasoningCombos.find(c => c.resultId === resultId);
@@ -902,14 +905,12 @@ export class EvidencePage extends Scene {
       return;
     }
 
-    // 打开预览弹窗（内容优先用 searchDB 结果，与线索 Tab 点击词条保持一致）
-    const searchEntry = searchDB[item.name];
-    const previewDesc = (searchEntry && searchEntry.result) ? searchEntry.result : (item.desc || '');
+    // 打开预览弹窗
     this._showBubblePreview = true;
     this._previewBubble = {
       id: item.id,
       name: item.name,
-      desc: previewDesc,
+      desc: item.desc,
       type: item.type,
     };
     this._previewAlpha = 0;
@@ -991,13 +992,7 @@ export class EvidencePage extends Scene {
     const comboIdx = reasoningCombos.indexOf(combo);
     this._clearHintIfMatched(comboIdx);
 
-    // 检查是否全部完成 → 推进到 ch4
-    const results = gameState.getReasoningResults();
-    if (results.length >= reasoningCombos.length) {
-      gameState.advanceChapter(4);
-    }
-
-    // 是因是果：点击关闭后触发封锁序列
+    // 是因是果 → 封锁序列接管，不在此直接推进章节
     if (combo.resultId === 'cause_and_effect') {
       this._pendingLockdown = true;
     }
@@ -1006,9 +1001,11 @@ export class EvidencePage extends Scene {
     this._showResultOverlay = true;
     this._resultTitle = combo.resultName;
     this._resultFullText = combo.resultText;
+    this._resultHighlight = combo.resultHighlight || '';
     this._resultDisplayText = '';
     this._resultTypingIndex = 0;
     this._resultTypingTimer = 0;
+    this._resultOverlayCache = null;
 
     // 刷新气泡和逻辑链路
     this._buildBubbles();
@@ -1031,7 +1028,8 @@ export class EvidencePage extends Scene {
         this._hintStage = 3;
       }
     } else if (failCount >= 4) {
-      this._triggerHint();
+      // Toast 时长 1500ms，等它播完再显示提示框，避免两者重叠
+      this._hintDelayTimer = 1500;
     }
 
     this._selectedBubbles = [];
@@ -1044,27 +1042,26 @@ export class EvidencePage extends Scene {
     const results = gameState.getReasoningResults();
     const pool = [...(gameState.get().collectedEvidence || []), ...results];
 
-    // 提示顺序：②③⑤⑥⑦优先（有证据的），④最后（依赖③结论）
-    const HINT_ORDER = [
+    // ④ cause_and_effect 绝对最后提示（依赖③结论且有特殊叙事意义）
+    // 其余组合按此顺序处理
+    const BASE_ORDER = [
       'impossible_leap',
       'leap_framework',
       'system_imbalance',
       'identity_paradox',
       'unreasonable_calm',
-      'cause_and_effect',
     ];
 
-    // 第一轮：找一个「证据已齐全、有 hintText、尚未完成」的组合提示
-    for (const resultId of HINT_ORDER) {
+    // 第一轮：②③⑤⑥⑦中「证据已齐全、尚未完成」的组合
+    for (const resultId of BASE_ORDER) {
       if (results.includes(resultId)) continue;
       const idx = reasoningCombos.findIndex(c => c.resultId === resultId);
       if (idx === -1) continue;
       const combo = reasoningCombos[idx];
-      if (!combo.hintText) continue;
       const missing = combo.ids.filter(id => !pool.includes(id));
       if (missing.length === 0) {
         this._hintCardVisible = true;
-        this._hintCardText = combo.hintText;
+        this._hintCardText = combo.hintText || '已收集到相关线索，试试把它们关联起来';
         this._hintTargetComboIdx = idx;
         this._hintStage = 1;
         this._hintFailsSinceCard = 0;
@@ -1076,8 +1073,8 @@ export class EvidencePage extends Scene {
       }
     }
 
-    // 第二轮：找第一个「证据不齐」的组合，提示缺少关键线索
-    for (const resultId of HINT_ORDER) {
+    // 第二轮：②③⑤⑥⑦中「证据不齐」的组合（缺证提示）
+    for (const resultId of BASE_ORDER) {
       if (results.includes(resultId)) continue;
       const idx = reasoningCombos.findIndex(c => c.resultId === resultId);
       if (idx === -1) continue;
@@ -1105,6 +1102,33 @@ export class EvidencePage extends Scene {
         return;
       }
     }
+
+    // 最后：④ cause_and_effect（无论证据是否齐全，都在所有其他提示之后）
+    if (!results.includes('cause_and_effect')) {
+      const idx = reasoningCombos.findIndex(c => c.resultId === 'cause_and_effect');
+      if (idx !== -1) {
+        const combo = reasoningCombos[idx];
+        const missing = combo.ids.filter(id => !pool.includes(id));
+        if (missing.length === 0) {
+          this._hintCardVisible = true;
+          this._hintCardText = combo.hintText || '已收集到相关线索，试试把它们关联起来';
+          this._hintTargetComboIdx = idx;
+          this._hintStage = 1;
+          this._hintFailsSinceCard = 0;
+          this._hintFailsSinceBubble0 = 0;
+          this._hintBubble0Id = combo.ids[0];
+          this._hintBubble1Id = combo.ids[1];
+          this._isDirty = true;
+        } else {
+          // 证据不齐时也给缺证提示
+          this._missingMsgText = '';
+          this._missingMsgVisible = true;
+          this._missingMsgAlpha = 1;
+          this._missingMsgTimer = 2800;
+          this._isDirty = true;
+        }
+      }
+    }
   }
 
   /** 推理成功后清理当前提示状态 */
@@ -1124,7 +1148,9 @@ export class EvidencePage extends Scene {
     this._showResultOverlay = false;
     this._resultDisplayText = '';
     this._resultFullText = '';
+    this._resultHighlight = '';
     this._resultTypingIndex = 0;
+    this._resultOverlayCache = null;
     if (this._pendingLockdown) {
       this._pendingLockdown = false;
       this._startLockdown();
@@ -1132,34 +1158,6 @@ export class EvidencePage extends Scene {
     }
     this._isDirty = true;
   }
-
-  /** 启动法司大人封锁序列 */
-  _startLockdown() {
-    this._lockdownActive = true;
-    this._lockdownTimer = 0;
-    this._lockdownPhaseDone = false;
-    this._lockdownBanner1Y = -70;
-    this._lockdownBanner1Alpha = 0;
-    this._lockdownBanner2Y = -70;
-    this._lockdownBanner2Alpha = 0;
-    this._lockdownOverlayAlpha = 0;
-    this._lockdownWarningAlpha = 0;
-    this._lockdownTypingText = '';
-    this._lockdownTypingIdx = 0;
-    this._lockdownTypingTimer = 0;
-    this._lockdownScrollX = this._screenWidth;
-    this._lockdownTriPhase = 0;
-    try { wx.vibrateLong(); } catch (e) {}
-    this._isDirty = true;
-  }
-
-  /** 封锁序列结束 — 推进 ch4，返回主页 */
-  _endLockdown() {
-    this._lockdownActive = false;
-    gameState.advanceChapter(4);
-    this.engine.popScene();
-  }
-
   // ==================== 推理系统 — 逻辑链路 ====================
 
   _buildLogicChain() {
@@ -1183,8 +1181,10 @@ export class EvidencePage extends Scene {
     this._showResultOverlay = true;
     this._resultTitle = combo.resultName;
     this._resultFullText = combo.resultText;
+    this._resultHighlight = combo.resultHighlight || '';
     this._resultDisplayText = combo.resultText; // 直接全文显示
     this._resultTypingIndex = combo.resultText.length;
+    this._resultOverlayCache = null;
   }
 
   // ==================== 导航 ====================
@@ -1199,13 +1199,19 @@ export class EvidencePage extends Scene {
 
   /** 引擎每帧检查：返回 false 时跳过 clearRect+render，零 Canvas 开销 */
   needsRedraw() {
-    return this._isDirty;
+    // 读取后立即重置，确保用户交互（如点击关闭按钮）设的 true 能触发本帧渲染，
+    // 而不会被 update() 的动画检测循环覆盖
+    const dirty = this._isDirty;
+    this._isDirty = false;
+    return dirty;
   }
 
   update(dt) {
     super.update(dt);
 
-    // ── 脏标记：检测需要持续重绘的动画状态 ──────────────────────────────
+    // ── 脏标记：仅在持续动画状态下按需置 true，不再在此重置 ──────────────
+    // 重置已移至 needsRedraw()，避免用户交互设的 dirty 被覆盖
+
     const sv = this._clueScrollView;
     if (sv && (sv._isDragging || sv._isAnimating || Math.abs(sv._velocity) > 0.5)) {
       this._isDirty = true;
@@ -1218,16 +1224,13 @@ export class EvidencePage extends Scene {
     }
     if (this._currentTab === 'reasoning' &&
         (this._isInertiaActive ||
-         this._autoRotateTimer < this._autoRotateDuration ||
-         this._showResultOverlay ||
+         (this._hasAutoRotated && this._autoRotateTimer < this._autoRotateDuration) ||
+         (this._showResultOverlay && this._resultTypingIndex < this._resultFullText.length) ||
          this._showBubblePreview ||
-         this._showOrbitHint)) {
+         (this._showOrbitHint && this._orbitHintAlpha > 0))) {
       this._isDirty = true;
     }
-    // 有新词条发光动画时持续重绘
-    if (this._evidenceCards.some(c => c._isNew)) {
-      this._isDirty = true;
-    }
+    // _isNew 是静态徽标，不需要每帧重绘
 
     // 增量式重排：每当有新卡片完成首次绘制（height > 0），就立即重排一次
     if (this._needsRelayout && this._evidenceCards.length > 0) {
@@ -1239,6 +1242,20 @@ export class EvidencePage extends Scene {
         if (readyCount === this._evidenceCards.length) {
           this._needsRelayout = false;
         }
+      }
+    }
+
+    // Toast 动画运行中保持重绘
+    if (this._toast && this._toast.visible) {
+      this._isDirty = true;
+    }
+
+    // 提示延迟倒计时：Toast 播完后再触发
+    if (this._hintDelayTimer > 0) {
+      this._hintDelayTimer -= dt;
+      if (this._hintDelayTimer <= 0) {
+        this._hintDelayTimer = 0;
+        this._triggerHint();
       }
     }
 
@@ -1319,96 +1336,10 @@ export class EvidencePage extends Scene {
       }
     }
 
-    // 法司大人封锁序列逐帧驱动
+    // 法司大人封锁序列计时
     if (this._lockdownActive) {
       this._lockdownTimer += dt;
-      const t = this._lockdownTimer;
-      const BANNER_H = 64;
-      const BANNER_TARGET_Y = (this._statusBarHeight || 44) + HEADER_HEIGHT + 8;
-      const TYPING_FULL = '法司大人紧急封锁权限';
-
-      // Banner1 动画 (0-350 滑入 / 350-2200 停留 / 2200-2550 滑出)
-      if (t < 350) {
-        const p = t / 350;
-        const e = 1 - Math.pow(1 - p, 3);
-        this._lockdownBanner1Y = -BANNER_H + (BANNER_TARGET_Y + BANNER_H) * e;
-        this._lockdownBanner1Alpha = e;
-      } else if (t < 2200) {
-        this._lockdownBanner1Y = BANNER_TARGET_Y;
-        this._lockdownBanner1Alpha = 1;
-      } else if (t < 2550) {
-        const p = (t - 2200) / 350;
-        const e = p * p;
-        this._lockdownBanner1Y = BANNER_TARGET_Y - (BANNER_TARGET_Y + BANNER_H) * e;
-        this._lockdownBanner1Alpha = 1 - e;
-      } else {
-        this._lockdownBanner1Alpha = 0;
-      }
-
-      // 暗红遮罩 (2550-2950 淡入 / 2950-7950 保持 / 7950-8350 淡出)
-      if (t >= 2550 && t < 2950) {
-        this._lockdownOverlayAlpha = ((t - 2550) / 400) * 0.8;
-      } else if (t >= 2950 && t < 7950) {
-        this._lockdownOverlayAlpha = 0.8;
-      } else if (t >= 7950 && t < 8350) {
-        this._lockdownOverlayAlpha = (1 - (t - 7950) / 400) * 0.8;
-      } else if (t >= 8350) {
-        this._lockdownOverlayAlpha = 0;
-      }
-
-      // 警告面板 (2950-3200 淡入 / 3200-7700 保持 / 7700-8350 淡出)
-      if (t >= 2950 && t < 3200) {
-        this._lockdownWarningAlpha = (t - 2950) / 250;
-      } else if (t >= 3200 && t < 7700) {
-        this._lockdownWarningAlpha = 1;
-      } else if (t >= 7700 && t < 8350) {
-        this._lockdownWarningAlpha = 1 - (t - 7700) / 650;
-      } else {
-        this._lockdownWarningAlpha = 0;
-      }
-
-      // 三角脉冲相位
-      this._lockdownTriPhase += dt * 0.004;
-
-      // 逐字打印 "法司大人紧急封锁权限" (3200-4700)
-      if (t >= 3200 && t < 4700 && this._lockdownTypingIdx < TYPING_FULL.length) {
-        this._lockdownTypingTimer += dt;
-        if (this._lockdownTypingTimer >= 80) {
-          this._lockdownTypingTimer = 0;
-          this._lockdownTypingIdx++;
-          this._lockdownTypingText = TYPING_FULL.slice(0, this._lockdownTypingIdx);
-        }
-      }
-
-      // WARNING 滚动 (4700-7950)
-      if (t >= 4700 && t < 7950) {
-        this._lockdownScrollX -= dt * 0.13;
-        const warningW = 500;
-        if (this._lockdownScrollX < -warningW) {
-          this._lockdownScrollX = this._screenWidth;
-        }
-      }
-
-      // Banner2 动画 (8350-8700 滑入 / 8700-10200 停留 / 10200-10550 滑出)
-      if (t >= 8350 && t < 8700) {
-        const p = (t - 8350) / 350;
-        const e = 1 - Math.pow(1 - p, 3);
-        this._lockdownBanner2Y = -BANNER_H + (BANNER_TARGET_Y + BANNER_H) * e;
-        this._lockdownBanner2Alpha = e;
-      } else if (t >= 8700 && t < 10200) {
-        this._lockdownBanner2Y = BANNER_TARGET_Y;
-        this._lockdownBanner2Alpha = 1;
-      } else if (t >= 10200 && t < 10550) {
-        const p = (t - 10200) / 350;
-        const e = p * p;
-        this._lockdownBanner2Y = BANNER_TARGET_Y - (BANNER_TARGET_Y + BANNER_H) * e;
-        this._lockdownBanner2Alpha = 1 - e;
-      } else if (t >= 10550 && !this._lockdownPhaseDone) {
-        this._lockdownPhaseDone = true;
-        this._endLockdown();
-        return;
-      }
-
+      this._updateLockdown(dt);
       this._isDirty = true;
     }
   }
@@ -1416,10 +1347,10 @@ export class EvidencePage extends Scene {
   // ==================== 触摸事件处理 ====================
 
   onTouchStart(event) {
-    if (this._lockdownActive) return;
     if (event.changedTouches.length === 0) return;
     this._isDirty = true;
     const touch = event.changedTouches[0];
+    if (this._lockdownActive) return;
     const x = touch.x;
     const y = touch.y;
     // 记录滑动起始点（用于右滑退出检测），重置拖拽状态
@@ -1427,12 +1358,8 @@ export class EvidencePage extends Scene {
     this._swipeStartY = y;
     this._swipeActive = false;
 
-    // 推理结果覆层 → 仅点击关闭按钮时关闭
+    // 推理结果覆层：拦截所有触摸，关闭仅通过关闭按钮（在 touchEnd 处理）
     if (this._showResultOverlay) {
-      const btn = this._resultCloseBtnRect;
-      if (btn && x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-        this._closeResultOverlay();
-      }
       return;
     }
 
@@ -1470,9 +1397,9 @@ export class EvidencePage extends Scene {
   }
 
   onTouchMove(event) {
-    if (this._lockdownActive) return;
     if (event.changedTouches.length === 0) return;
     this._isDirty = true;
+    if (this._lockdownActive) return;
     const touch = event.changedTouches[0];
     const dx = touch.x - this._swipeStartX;
     const dy = touch.y - this._swipeStartY;
@@ -1495,8 +1422,8 @@ export class EvidencePage extends Scene {
   }
 
   onTouchEnd(event) {
-    if (this._lockdownActive) return;
     if (event.changedTouches.length === 0) return;
+    if (this._lockdownActive) return;
     this._isDirty = true;
     const touch = event.changedTouches[0];
     const x = touch.x;
@@ -1514,6 +1441,15 @@ export class EvidencePage extends Scene {
       } else {
         // 未达阈值 → 弹回原位
         Tween.create(this).to({ x: 0 }, 180, 'easeOut').start();
+      }
+      return;
+    }
+
+    // 推理结果覆层 → 仅关闭按钮区域可关闭
+    if (this._showResultOverlay) {
+      const r = this._resultCloseBtnRect;
+      if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        this._closeResultOverlay();
       }
       return;
     }
@@ -1556,13 +1492,26 @@ export class EvidencePage extends Scene {
   // ---- 线索 Tab 触摸处理 ----
 
   _handleCluesTabTouch(x, y, phase) {
-    // 浮层详情已显示时：任意点击关闭浮层
+    // 浮层详情显示时：仅拦截浮层内部触摸，浮层外触摸穿透给 ScrollView
     if (this._cardDetailVisible) {
-      if (phase === 'end') {
-        this._cardDetailVisible = false;
-        this._isDirty = true;
+      const sw = this._screenWidth;
+      const px = 14;
+      const panelX = px;
+      const panelW = sw - px * 2;
+      const panelY = this._cardDetailOverlayY || this._getContentTop();
+      const overlayH = this._getCardDetailHeight(this._cardDetailText || '');
+      const inOverlay = x >= panelX && x <= panelX + panelW &&
+                        y >= panelY && y <= panelY + overlayH;
+      if (inOverlay) {
+        // 浮层右上角关闭按钮区域（「点击关闭 ×」文字所在区域）
+        if (phase === 'end' && x >= panelX + panelW - 80 && y <= panelY + 26) {
+          this._cardDetailVisible = false;
+          this._isDirty = true;
+        }
+        // 浮层内其他触摸消费掉，不穿透
+        return;
       }
-      return;
+      // 浮层外触摸：不拦截，继续走下方 ScrollView 逻辑
     }
 
     const contentTop = this._getContentTop();
@@ -1752,16 +1701,26 @@ export class EvidencePage extends Scene {
       return;
     }
 
-    // 逻辑链路列表点击
+    // 逻辑链路列表点击（双列布局，左=关联，右=矛盾）
     if (phase === 'end' && y >= chainY) {
-      const itemH = 28;
-      const chainHeaderH = 24;
-      const localY = y - chainY - chainHeaderH;
-      if (localY >= 0) {
-        const idx = Math.floor(localY / itemH);
-        if (idx >= 0 && idx < this._logicChain.length && this._logicChain[idx].completed) {
-          this._tapChainItem(this._logicChain[idx].resultId);
+      const colGap = 8;
+      const colPx = 12;
+      const colW = Math.floor((this._screenWidth - colPx * 2 - colGap) / 2);
+      const rightColX = colPx + colW + colGap;
+      // 列标题 24 + 18 = 42px
+      const itemsStartY = chainY + 42;
+      const isRight = x >= rightColX;
+      const colItems = isRight
+        ? this._logicChain.filter(ci => ci.mode === 'contradict')
+        : this._logicChain.filter(ci => ci.mode === 'relate');
+      let cumY = itemsStartY;
+      for (const chainItem of colItems) {
+        const ciH = chainItem.completed ? 48 : 28;
+        if (y >= cumY && y < cumY + ciH) {
+          if (chainItem.completed) this._tapChainItem(chainItem.resultId);
+          break;
         }
+        cumY += ciH;
       }
       return;
     }
@@ -1841,11 +1800,6 @@ export class EvidencePage extends Scene {
     if (this._showResultOverlay) {
       this._drawResultOverlay(ctx);
     }
-
-    // 法司大人封锁序列（最顶层绘制）
-    if (this._lockdownActive) {
-      this._drawLockdownSequence(ctx);
-    }
   }
 
   /** 重写 render：弹窗覆盖层必须在子节点（ScrollView）渲染完毕后绘制，否则会被遮挡 */
@@ -1855,6 +1809,12 @@ export class EvidencePage extends Scene {
       ctx.save();
       ctx.translate(this.x || 0, this.y || 0);
       this._drawCardDetailOverlay(ctx);
+      ctx.restore();
+    }
+    if (this._lockdownActive) {
+      ctx.save();
+      ctx.translate(this.x || 0, this.y || 0);
+      this._drawLockdownSequence(ctx);
       ctx.restore();
     }
   }
@@ -2078,14 +2038,14 @@ export class EvidencePage extends Scene {
       ctx.stroke();
 
       // 结果文本区域（可滚动）
-      const textAreaTop = divY + 6;
+      const textAreaTop = divY + 10;
       const textAreaBottom = panelY + panelH - 8;
       const textAreaH = textAreaBottom - textAreaTop;
 
-      // 裁剪到结果区域
+      // 裁剪到结果区域（clip 向上扩展 2px 防止 CJK ascender 被截）
       ctx.save();
       ctx.beginPath();
-      ctx.rect(resultX - 2, textAreaTop, resultMaxW + 4, textAreaH);
+      ctx.rect(resultX - 2, textAreaTop - 2, resultMaxW + 4, textAreaH + 2);
       ctx.clip();
 
       ctx.font = `${13}px ${FONT_MONO}`;
@@ -2614,10 +2574,14 @@ export class EvidencePage extends Scene {
     ctx.restore();
   }
 
-  /** 逻辑链路绘制 */
+  /** 逻辑链路绘制（双列：左=关联，右=矛盾） */
   _drawLogicChain(ctx, y) {
     const sw = this._screenWidth;
     const px = 12;
+    const colGap = 8;
+    const colW = Math.floor((sw - px * 2 - colGap) / 2);
+    const leftX = px;
+    const rightX = px + colW + colGap;
     const chainY = y;
 
     ctx.save();
@@ -2626,7 +2590,6 @@ export class EvidencePage extends Scene {
     const titleY = chainY;
     const lineW = 60;
 
-    // 左线
     const lineGrad1 = ctx.createLinearGradient(px, 0, px + lineW, 0);
     lineGrad1.addColorStop(0, 'transparent');
     lineGrad1.addColorStop(1, 'rgba(0, 245, 212, 0.12)');
@@ -2637,14 +2600,12 @@ export class EvidencePage extends Scene {
     ctx.lineTo(px + lineW, titleY + 8);
     ctx.stroke();
 
-    // 标题
     ctx.font = `${12}px ${FONT_MONO}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = TEXT_DIM;
-    ctx.fillText('\u903B\u8F91\u94FE\u8DEF', sw / 2 - 24, titleY + 8); // 逻辑链路
+    ctx.fillText('逻辑链路', sw / 2 - 24, titleY + 8); // 逻辑链路
 
-    // 计数
     ctx.fillStyle = 'rgba(0, 245, 212, 0.5)';
     ctx.fillText(
       `${this._completedCount}/${reasoningCombos.length}`,
@@ -2652,7 +2613,6 @@ export class EvidencePage extends Scene {
       titleY + 8
     );
 
-    // 右线
     const lineGrad2 = ctx.createLinearGradient(sw - px - lineW, 0, sw - px, 0);
     lineGrad2.addColorStop(0, 'rgba(0, 245, 212, 0.12)');
     lineGrad2.addColorStop(1, 'transparent');
@@ -2662,78 +2622,339 @@ export class EvidencePage extends Scene {
     ctx.lineTo(sw - px, titleY + 8);
     ctx.stroke();
 
-    // 链路列表项
-    const itemStartY = titleY + 24;
-    const itemH = 36; // 已完成项多一行来源标注
+    // 列标题
+    const colHeaderY = titleY + 24;
+    ctx.font = `${11}px ${FONT_MONO}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0, 245, 212, 0.45)';
+    ctx.fillText('关联', leftX + colW / 2, colHeaderY + 7);  // 关联
+    ctx.fillText('矛盾', rightX + colW / 2, colHeaderY + 7); // 矛盾
 
-    for (let i = 0; i < this._logicChain.length; i++) {
-      const item = this._logicChain[i];
-      const iy = itemStartY + i * itemH;
+    // 列分隔线
+    ctx.strokeStyle = 'rgba(0, 245, 212, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(leftX + colW + colGap / 2, colHeaderY);
+    ctx.lineTo(leftX + colW + colGap / 2, colHeaderY + 200);
+    ctx.stroke();
 
-      // 已完成的高亮背景
-      if (item.completed) {
-        ctx.fillStyle = 'rgba(0, 245, 212, 0.04)';
-        this._roundRect(ctx, px, iy, (sw - px * 2), itemH - 4, 3);
-        ctx.fill();
+    // 双列渲染
+    const ITEM_H_DONE = 48;
+    const ITEM_H_PENDING = 28;
+    const relateItems    = this._logicChain.filter(item => item.mode === 'relate');
+    const contradictItems = this._logicChain.filter(item => item.mode === 'contradict');
+    const itemsStartY = colHeaderY + 18;
+
+    const renderCol = (items, colX) => {
+      let curY = itemsStartY;
+      for (const item of items) {
+        const itemH = item.completed ? ITEM_H_DONE : ITEM_H_PENDING;
+        const iy = curY;
+        curY += itemH;
+
+        if (item.completed) {
+          ctx.fillStyle = 'rgba(0, 245, 212, 0.04)';
+          this._roundRect(ctx, colX, iy, colW, itemH - 4, 3);
+          ctx.fill();
+        }
+
+        const nameRowY = iy + 14;
+
+        ctx.font = `${12}px ${FONT_PRIMARY}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        if (item.completed) {
+          ctx.fillStyle = RUNE_CYAN;
+          ctx.shadowColor = 'rgba(0, 245, 212, 0.5)';
+          ctx.shadowBlur = 3;
+          ctx.fillText('◈', colX + 6, nameRowY); // ◈
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+        } else {
+          ctx.fillStyle = TEXT_DIM;
+          ctx.fillText('◇', colX + 6, nameRowY); // ◇
+        }
+
+        // 名称（列标题已标明模式，不再显示模式标签）
+        ctx.font = `${13}px ${FONT_PRIMARY}`;
+        ctx.fillStyle = item.completed ? TEXT_PRIMARY : TEXT_DIM;
+        ctx.fillText(
+          item.completed ? item.resultName : '???',
+          colX + 20,
+          nameRowY
+        );
+
+        // 来源词条小字
+        if (item.completed && item.sourceIds) {
+          const resolveSrcName = (sid) => {
+            if (evidenceList[sid]) return evidenceList[sid].name;
+            const rc = reasoningCombos.find(c => c.resultId === sid);
+            return rc ? rc.resultName : sid;
+          };
+          const srcText = item.sourceIds.map(resolveSrcName).join(' × ');
+          ctx.font = `9px ${FONT_MONO}`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(0,245,212,0.38)';
+          ctx.fillText(srcText, colX + 20, iy + 30);
+          ctx.textBaseline = 'middle';
+        }
       }
+    };
 
-      // 图标
-      ctx.font = `${13}px ${FONT_PRIMARY}`;
-      ctx.textAlign = 'left';
+    renderCol(relateItems, leftX);
+    renderCol(contradictItems, rightX);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.restore();
+  }
+
+  // ==================== 法司大人封锁序列 ====================
+
+  _startLockdown() {
+    this._lockdownActive = true;
+    this._lockdownTimer = 0;
+    this._lockdownBanner1Y = -70;
+    this._lockdownBanner1Alpha = 0;
+    this._lockdownBanner2Y = -70;
+    this._lockdownBanner2Alpha = 0;
+    this._lockdownOverlayAlpha = 0;
+    this._lockdownWarningAlpha = 0;
+    this._lockdownTypingText = '';
+    this._lockdownTypingIdx = 0;
+    this._lockdownTypingTimer = 0;
+    this._lockdownScrollX = 0;
+    this._lockdownTriPhase = 0;
+    try { wx.vibrateLong(); } catch (e) {}
+    this._isDirty = true;
+  }
+
+  _endLockdown() {
+    this._lockdownActive = false;
+    gameState.advanceChapter(4);
+    this.engine.popScene();
+  }
+
+  _updateLockdown(dt) {
+    const t = this._lockdownTimer;
+    const BANNER_TARGET_Y = (this._statusBarHeight || 44) + HEADER_HEIGHT + 8;
+    const BANNER_H = 64;
+
+    // Banner1: 0-350 滑入, 350-2200 保持, 2200-2550 滑出
+    if (t < 350) {
+      this._lockdownBanner1Alpha = Math.min(1, t / 150);
+      this._lockdownBanner1Y = BANNER_TARGET_Y - BANNER_H * (1 - t / 350);
+    } else if (t < 2200) {
+      this._lockdownBanner1Alpha = 1;
+      this._lockdownBanner1Y = BANNER_TARGET_Y;
+    } else if (t < 2550) {
+      this._lockdownBanner1Alpha = Math.max(0, 1 - (t - 2200) / 350);
+      this._lockdownBanner1Y = BANNER_TARGET_Y - BANNER_H * ((t - 2200) / 350);
+    } else {
+      this._lockdownBanner1Alpha = 0;
+    }
+
+    // 红色遮罩: 2550-2950 淡入, 2950-8550 保持, 8550-8950 淡出
+    if (t >= 2550 && t < 2950) {
+      this._lockdownOverlayAlpha = (t - 2550) / 400 * 0.8;
+    } else if (t >= 2950 && t < 8550) {
+      this._lockdownOverlayAlpha = 0.8;
+    } else if (t >= 8550 && t < 8950) {
+      this._lockdownOverlayAlpha = Math.max(0, 0.8 - (t - 8550) / 400 * 0.8);
+    } else if (t >= 8950) {
+      this._lockdownOverlayAlpha = 0;
+    }
+
+    // 警告面板: 2950-3200 淡入, 3200-8300 保持(6s总时长), 8300-8950 淡出
+    if (t >= 2950 && t < 3200) {
+      this._lockdownWarningAlpha = (t - 2950) / 250;
+    } else if (t >= 3200 && t < 8300) {
+      this._lockdownWarningAlpha = 1;
+    } else if (t >= 8300 && t < 8950) {
+      this._lockdownWarningAlpha = Math.max(0, 1 - (t - 8300) / 650);
+    } else if (t >= 8950) {
+      this._lockdownWarningAlpha = 0;
+    }
+
+    // 打字机: 3200-4700 (80ms/字)
+    const TYPING_FULL = '法司大人紧急封锁权限';
+    if (t >= 3200 && t < 4700 && this._lockdownTypingIdx < TYPING_FULL.length) {
+      this._lockdownTypingTimer += dt;
+      while (this._lockdownTypingTimer >= 80 && this._lockdownTypingIdx < TYPING_FULL.length) {
+        this._lockdownTypingTimer -= 80;
+        this._lockdownTypingIdx++;
+      }
+      this._lockdownTypingText = TYPING_FULL.slice(0, this._lockdownTypingIdx);
+    } else if (t >= 4700) {
+      this._lockdownTypingText = TYPING_FULL;
+    }
+
+    // WARNING 滚动: 4700-8550（与警告面板保持同步）
+    if (t >= 4700 && t < 8550) {
+      this._lockdownScrollX -= dt * 0.12;
+    }
+
+    // Banner2: 8950-9300 滑入, 9300-10800 保持, 10800-11150 滑出, 11150+ 结束
+    if (t >= 8950 && t < 9300) {
+      const p = (t - 8950) / 350;
+      this._lockdownBanner2Alpha = Math.min(1, p * 2);
+      this._lockdownBanner2Y = BANNER_TARGET_Y - BANNER_H * (1 - p);
+    } else if (t >= 9300 && t < 10800) {
+      this._lockdownBanner2Alpha = 1;
+      this._lockdownBanner2Y = BANNER_TARGET_Y;
+    } else if (t >= 10800 && t < 11150) {
+      const p = (t - 10800) / 350;
+      this._lockdownBanner2Alpha = Math.max(0, 1 - p);
+      this._lockdownBanner2Y = BANNER_TARGET_Y - BANNER_H * p;
+    } else if (t >= 11150) {
+      this._lockdownBanner2Alpha = 0;
+      this._endLockdown();
+    }
+  }
+
+  _drawLockdownSequence(ctx) {
+    const sw = this._screenWidth;
+    const sh = this._screenHeight;
+    const t = this._lockdownTimer;
+
+    // 红色遮罩
+    if (this._lockdownOverlayAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = this._lockdownOverlayAlpha;
+      ctx.fillStyle = 'rgba(60, 0, 0, 1)';
+      ctx.fillRect(0, 0, sw, sh);
+      ctx.restore();
+    }
+
+    // 警告面板
+    if (this._lockdownWarningAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = this._lockdownWarningAlpha;
+
+      const cx = sw / 2;
+      const cy = sh / 2 - 40;
+
+      // 三角警告图标（固定尺寸，无脉动）
+      const triSize = 52;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - triSize * 0.7);
+      ctx.lineTo(cx - triSize * 0.8, cy + triSize * 0.45);
+      ctx.lineTo(cx + triSize * 0.8, cy + triSize * 0.45);
+      ctx.closePath();
+      ctx.strokeStyle = '#ff3333';
+      ctx.lineWidth = 4.5;
+      ctx.shadowColor = 'rgba(255, 50, 50, 0.8)';
+      ctx.shadowBlur = 12;
+      ctx.stroke();
+      // 感叹号
+      ctx.fillStyle = '#ff3333';
+      ctx.font = `bold 28px ${FONT_MONO}`;
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      if (item.completed) {
-        ctx.fillStyle = RUNE_CYAN;
-        ctx.shadowColor = 'rgba(0, 245, 212, 0.5)';
-        ctx.shadowBlur = 4;
-        ctx.fillText('\u25C8', (px + 8), iy + (itemH - 4) / 2); // ◈
+      ctx.fillText('!', cx, cy + 10);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+
+      // 警告！
+      ctx.font = `bold 13px ${FONT_MONO}`;
+      ctx.fillStyle = '#ff3333';
+      ctx.shadowColor = 'rgba(255,50,50,0.6)';
+      ctx.shadowBlur = 8;
+      ctx.fillText('警告！', cx, cy + triSize * 0.7 + 22);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+
+      // 打字机文字
+      if (this._lockdownTypingText) {
+        ctx.font = `bold 14px ${FONT_MONO}`;
+        ctx.fillStyle = '#ff3333';
+        ctx.shadowColor = 'rgba(255,50,50,0.5)';
+        ctx.shadowBlur = 6;
+        ctx.fillText(this._lockdownTypingText, cx, cy + triSize * 0.7 + 50);
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
-      } else {
-        ctx.fillStyle = TEXT_DIM;
-        ctx.fillText('\u25C7', (px + 8), iy + (itemH - 4) / 2); // ◇
       }
 
-      // 名称
-      ctx.font = `${14}px ${FONT_PRIMARY}`;
-      ctx.fillStyle = item.completed ? TEXT_PRIMARY : TEXT_DIM;
-      ctx.fillText(
-        item.completed ? item.resultName : '???',
-        (px + 24),
-        iy + (itemH - 4) / 2
-      );
-
-      // 模式标签
-      if (item.completed) {
-        const modeText = item.mode === 'relate' ? '\u5173\u8054' : '\u77DB\u76FE'; // 关联 / 矛盾
-        ctx.font = `${11}px ${FONT_MONO}`;
-        const modeW = ctx.measureText(modeText).width + 12;
-        const modeX = (sw - px - 8) - modeW;
-        const modeY = iy + (itemH - 4) / 2 - 8;
-
-        ctx.strokeStyle = 'rgba(0, 245, 212, 0.15)';
-        ctx.lineWidth = 1;
-        this._roundRect(ctx, modeX, modeY, modeW, 16, 2);
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(0, 245, 212, 0.5)';
-        ctx.textAlign = 'center';
-        ctx.fillText(modeText, modeX + modeW / 2, iy + (itemH - 4) / 2);
+      // WARNING 持续滚动文字（4700-8550，无闪烁）
+      if (t >= 4700 && t < 8550) {
+        const warnY = cy + triSize * 0.7 + 82;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, warnY - 12, sw, 24);
+        ctx.clip();
+        const warnText = '  WARNING  WARNING  WARNING  WARNING  WARNING  ';
+        ctx.font = `bold 11px ${FONT_MONO}`;
+        ctx.fillStyle = 'rgba(255, 60, 60, 0.85)';
+        const textW = ctx.measureText(warnText).width;
+        const offsetX = this._lockdownScrollX % textW;
+        for (let wx = offsetX - textW; wx < sw + textW; wx += textW) {
+          ctx.fillText(warnText, wx, warnY);
+        }
+        ctx.restore();
       }
 
-      // 来源词条小字（已完成项）
-      if (item.completed && item.sourceIds) {
-        const resolveSrcName = (sid) => {
-          if (evidenceList[sid]) return evidenceList[sid].name;
-          const rc = reasoningCombos.find(c => c.resultId === sid);
-          return rc ? rc.resultName : sid;
-        };
-        const srcText = item.sourceIds.map(resolveSrcName).join(' × ');
-        ctx.font = `10px ${FONT_MONO}`;
-        ctx.textAlign = 'left';
-        ctx.fillStyle = 'rgba(0,245,212,0.38)';
-        ctx.fillText(srcText, px + 24, iy + itemH - 10);
-      }
+      ctx.restore();
     }
+
+    // Banner1（封锁通知）
+    if (this._lockdownBanner1Alpha > 0) {
+      this._drawNotifBanner(ctx,
+        this._lockdownBanner1Y,
+        this._lockdownBanner1Alpha,
+        '[法司大人·档录系统]',
+        '识别到连接对象为重要嫌疑人，开启自动封锁功能',
+        '#ff4444'
+      );
+    }
+
+    // Banner2（恢复通知）
+    if (this._lockdownBanner2Alpha > 0) {
+      this._drawNotifBanner(ctx,
+        this._lockdownBanner2Y,
+        this._lockdownBanner2Alpha,
+        '[调查官授权]',
+        '授权通过，恢复链接对象权限',
+        RUNE_CYAN
+      );
+    }
+  }
+
+  _drawNotifBanner(ctx, bannerY, alpha, headerText, bodyText, accentColor) {
+    const sw = this._screenWidth;
+    const BANNER_H = 64;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // 背景
+    ctx.fillStyle = 'rgba(4, 8, 18, 0.97)';
+    ctx.fillRect(0, bannerY, sw, BANNER_H);
+
+    // 左侧色条
+    ctx.fillStyle = accentColor;
+    ctx.fillRect(0, bannerY, 3, BANNER_H);
+
+    // 底部分隔线
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, bannerY + BANNER_H);
+    ctx.lineTo(sw, bannerY + BANNER_H);
+    ctx.stroke();
+
+    // header 标签
+    ctx.font = `bold 10px ${FONT_MONO}`;
+    ctx.fillStyle = accentColor;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(headerText, 12, bannerY + 10);
+
+    // body 文字
+    ctx.font = `bold 12px ${FONT_PRIMARY}`;
+    ctx.fillStyle = accentColor;
+    ctx.fillText(bodyText, 12, bannerY + 28);
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
@@ -2791,7 +3012,7 @@ export class EvidencePage extends Scene {
     let curY = cy + 20;
 
     // 类型标签
-    const tagText = bubble.type === 'result' ? '推理线索' : '证据'; // 推理线索 / 证据
+    const tagText = bubble.type === 'result' ? '\u63A8\u7406\u7EBF\u7D22' : '\u8BC1\u636E'; // 推理线索 / 证据
     const tagColor = bubble.type === 'result' ? 'rgba(180, 255, 245, 0.9)' : RUNE_CYAN;
     const tagBorder = bubble.type === 'result' ? 'rgba(180, 255, 245, 0.3)' : 'rgba(0, 245, 212, 0.3)';
     ctx.font = `${9}px ${FONT_MONO}`;
@@ -2826,16 +3047,26 @@ export class EvidencePage extends Scene {
     ctx.stroke();
     curY += 10;
 
-    // 描述（优先用 searchDB 结果，与线索 Tab 点击词条一致）
+    // 描述（推理结论只显示第一行摘要，避免过长）
     ctx.font = `${12}px ${FONT_PRIMARY}`;
     ctx.fillStyle = TEXT_SECONDARY;
     ctx.textBaseline = 'top';
     const descMaxW = cardW - 36;
-    const descLines = this._wrapText(ctx, bubble.desc, descMaxW);
+    let descText = bubble.desc || '';
+    if (bubble.type === 'result') {
+      // 取首段首句（完整句子）作为推理摘要，不做字数硬截断
+      const firstPara = descText.split('\n')[0];
+
+      const sentEnd = firstPara.indexOf('。');
+      descText = sentEnd >= 0 ? firstPara.slice(0, sentEnd + 1) : firstPara;
+    }
+    const descLines = this._wrapText(ctx, descText, descMaxW);
     const descLineH = 12 * 1.8;
-    for (let i = 0; i < Math.min(descLines.length, 4); i++) {
+    const maxDescLines = bubble.type === 'result' ? 3 : 4;
+    for (let i = 0; i < Math.min(descLines.length, maxDescLines); i++) {
       ctx.fillText(descLines[i], cx + 18, curY + i * descLineH);
     }
+
 
     // 按钮
     const btnGap = 12;
@@ -2856,7 +3087,7 @@ export class EvidencePage extends Scene {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = TEXT_SECONDARY;
-    ctx.fillText('取消', btn1X + btnW / 2, btnY + btnH / 2); // 取消
+    ctx.fillText('\u53D6\u6D88', btn1X + btnW / 2, btnY + btnH / 2); // 取消
 
     // 选择按钮
     this._roundRect(ctx, btn2X, btnY, btnW, btnH, 3);
@@ -2867,7 +3098,7 @@ export class EvidencePage extends Scene {
     ctx.fillStyle = RUNE_CYAN;
     ctx.shadowColor = 'rgba(0, 245, 212, 0.3)';
     ctx.shadowBlur = 3;
-    ctx.fillText('选择', btn2X + btnW / 2, btnY + btnH / 2); // 选择
+    ctx.fillText('\u9009\u62E9', btn2X + btnW / 2, btnY + btnH / 2); // 选择
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
 
@@ -2888,30 +3119,77 @@ export class EvidencePage extends Scene {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
     ctx.fillRect(0, 0, sw, sh);
 
-    // 结果框（高度根据文字内容动态计算，避免溢出）
     const boxW = 310;
     const pad = 18;
     const contentW = boxW - pad * 2;
     const titleLineH = 14 * 1.5;
     const resultLineH = 12 * 1.9;
 
-    ctx.font = `${14}px ${FONT_PRIMARY}`;
-    const titleText = `推理线索「${this._resultTitle}」加入逻辑链路`;
-    const titleLines = this._wrapText(ctx, titleText, contentW);
+    // ---- 初始化静态缓存（标题/全文/高亮换行结果 + 框尺寸 + gradient 只算一次）----
+    if (!this._resultOverlayCache) {
+      ctx.font = `${14}px ${FONT_PRIMARY}`;
+      const titleText = `推理线索「${this._resultTitle}」加入逻辑链路`;
+      const titleLines = this._wrapText(ctx, titleText, contentW);
 
-    ctx.font = `${12}px ${FONT_MONO}`;
-    const fullLines = this._wrapText(ctx, this._resultFullText || this._resultDisplayText, contentW);
+      ctx.font = `${12}px ${FONT_MONO}`;
+      const fullLines = this._wrapText(ctx, this._resultFullText, contentW);
 
-    const neededH = 20 + 20 + titleLines.length * titleLineH + 10 + 12 + fullLines.length * resultLineH + 36;
-    const boxH = Math.min(neededH, Math.floor(sh * 0.85));
-    const bx = (sw - boxW) / 2;
-    const by = (sh - boxH) / 2;
+      ctx.font = `bold ${13}px ${FONT_MONO}`;
+      const highlightLines = this._resultHighlight ? this._wrapText(ctx, this._resultHighlight, contentW) : [];
+
+      const neededH = 20 + 20 + titleLines.length * titleLineH + 10 + 12
+        + fullLines.length * resultLineH
+        + (highlightLines.length > 0 ? 14 + highlightLines.length * resultLineH : 0) + 36;
+      const boxH = Math.min(neededH, Math.floor(sh * 0.85));
+      const bx = (sw - boxW) / 2;
+      const by = (sh - boxH) / 2;
+
+      const bgGrad = ctx.createLinearGradient(bx, by, bx + boxW, by + boxH);
+      bgGrad.addColorStop(0, 'rgba(8, 12, 32, 0.97)');
+      bgGrad.addColorStop(1, 'rgba(5, 8, 25, 0.98)');
+
+      const lineGrad = ctx.createLinearGradient(bx + boxW * 0.15, 0, bx + boxW * 0.85, 0);
+      lineGrad.addColorStop(0, 'transparent');
+      lineGrad.addColorStop(0.5, RUNE_CYAN);
+      lineGrad.addColorStop(1, 'transparent');
+
+      const sepGrad = ctx.createLinearGradient(bx + pad, 0, bx + boxW, 0);
+      sepGrad.addColorStop(0, 'rgba(0, 245, 212, 0.15)');
+      sepGrad.addColorStop(1, 'transparent');
+
+      this._resultOverlayCache = {
+        titleLines, fullLines, highlightLines,
+        boxH, bx, by,
+        bgGrad, lineGrad, sepGrad,
+        lastTypingIndex: -1,
+        resultLines: [],
+      };
+
+      // 关闭按钮区域也只算一次
+      const closeBtnW = 100;
+      const closeBtnH = 28;
+      this._resultCloseBtnRect = {
+        x: bx + (boxW - closeBtnW) / 2,
+        y: by + boxH - closeBtnH - 12,
+        w: closeBtnW,
+        h: closeBtnH,
+      };
+    }
+
+    const c = this._resultOverlayCache;
+    const { bx, by, boxH, titleLines, fullLines, highlightLines } = c;
+
+    // ---- 逐字打印文字：只在 index 变化时重新 wrap ----
+    if (this._resultTypingIndex !== c.lastTypingIndex) {
+      ctx.font = `${12}px ${FONT_MONO}`;
+      c.resultLines = this._wrapText(ctx, this._resultDisplayText, contentW);
+      c.lastTypingIndex = this._resultTypingIndex;
+    }
+
+    // ---- 绘制 ----
 
     // 背景
-    const bgGrad = ctx.createLinearGradient(bx, by, bx + boxW, by + boxH);
-    bgGrad.addColorStop(0, 'rgba(8, 12, 32, 0.97)');
-    bgGrad.addColorStop(1, 'rgba(5, 8, 25, 0.98)');
-    ctx.fillStyle = bgGrad;
+    ctx.fillStyle = c.bgGrad;
     ctx.fillRect(bx, by, boxW, boxH);
 
     // 边框
@@ -2920,11 +3198,7 @@ export class EvidencePage extends Scene {
     ctx.strokeRect(bx, by, boxW, boxH);
 
     // 顶部青色光线
-    const lineGrad = ctx.createLinearGradient(bx + boxW * 0.15, 0, bx + boxW * 0.85, 0);
-    lineGrad.addColorStop(0, 'transparent');
-    lineGrad.addColorStop(0.5, RUNE_CYAN);
-    lineGrad.addColorStop(1, 'transparent');
-    ctx.strokeStyle = lineGrad;
+    ctx.strokeStyle = c.lineGrad;
     ctx.lineWidth = 2;
     ctx.shadowColor = 'rgba(0, 245, 212, 0.4)';
     ctx.shadowBlur = 6;
@@ -2958,10 +3232,7 @@ export class EvidencePage extends Scene {
     curY += titleLines.length * titleLineH + 10;
 
     // 分隔线
-    const sepGrad = ctx.createLinearGradient(bx + pad, 0, bx + boxW, 0);
-    sepGrad.addColorStop(0, 'rgba(0, 245, 212, 0.15)');
-    sepGrad.addColorStop(1, 'transparent');
-    ctx.strokeStyle = sepGrad;
+    ctx.strokeStyle = c.sepGrad;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(bx + pad, curY);
@@ -2969,192 +3240,49 @@ export class EvidencePage extends Scene {
     ctx.stroke();
     curY += 12;
 
-    // 逐字打印文字（当前已打印部分）
+    // 逐字打印文字
     ctx.font = `${12}px ${FONT_MONO}`;
     ctx.fillStyle = 'rgba(0, 245, 212, 0.85)';
-    const resultLines = this._wrapText(ctx, this._resultDisplayText, contentW);
-    for (let i = 0; i < resultLines.length; i++) {
-      ctx.fillText(resultLines[i], bx + pad, curY + i * resultLineH);
+    for (let i = 0; i < c.resultLines.length; i++) {
+      ctx.fillText(c.resultLines[i], bx + pad, curY + i * resultLineH);
+    }
+    curY += c.resultLines.length * resultLineH;
+
+    // 高亮句（打字完成后显示）
+    if (this._resultHighlight && this._resultTypingIndex >= this._resultFullText.length) {
+      curY += 14;
+      ctx.font = `bold ${13}px ${FONT_MONO}`;
+      ctx.fillStyle = '#ff4d4d';
+      ctx.shadowColor = 'rgba(255, 77, 77, 0.6)';
+      ctx.shadowBlur = 6;
+      for (let i = 0; i < highlightLines.length; i++) {
+        ctx.fillText(highlightLines[i], bx + pad, curY + i * resultLineH);
+      }
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
     }
 
-    // close button
-    const closeBtnW = 80;
-    const closeBtnH = 28;
-    const closeBtnX = bx + (boxW - closeBtnW) / 2;
-    const closeBtnY = by + boxH - closeBtnH - 12;
+    // 关闭按钮
+    const r = this._resultCloseBtnRect;
+    this._roundRect(ctx, r.x, r.y, r.w, r.h, 4);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(0, 245, 212, 0.1)';
-    this._roundRect(ctx, closeBtnX, closeBtnY, closeBtnW, closeBtnH, 4);
+    ctx.fillStyle = 'rgba(0, 245, 212, 0.08)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 245, 212, 0.5)';
+    ctx.strokeStyle = 'rgba(0, 245, 212, 0.4)';
     ctx.lineWidth = 1;
-    this._roundRect(ctx, closeBtnX, closeBtnY, closeBtnW, closeBtnH, 4);
     ctx.stroke();
     ctx.font = `${12}px ${FONT_PRIMARY}`;
-    ctx.fillStyle = RUNE_CYAN;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('确认', closeBtnX + closeBtnW / 2, closeBtnY + closeBtnH / 2);
-    this._resultCloseBtnRect = { x: closeBtnX, y: closeBtnY, w: closeBtnW, h: closeBtnH };
-
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.restore();
-  }
-
-  // ==================== 法司大人封锁序列绘制 ====================
-
-  _drawLockdownSequence(ctx) {
-    const sw = this._screenWidth;
-    const sh = this._screenHeight;
-    ctx.save();
-
-    // ── 暗红遮罩 ──
-    if (this._lockdownOverlayAlpha > 0) {
-      ctx.globalAlpha = this._lockdownOverlayAlpha;
-      ctx.fillStyle = 'rgba(80, 0, 0, 1)';
-      ctx.fillRect(0, 0, sw, sh);
-      ctx.globalAlpha = 1;
-    }
-
-    // ── 警告面板 ──
-    if (this._lockdownWarningAlpha > 0) {
-      ctx.globalAlpha = this._lockdownWarningAlpha;
-      const cx = sw / 2;
-      const cy = sh * 0.42;
-
-      // 红色等边三角形（脉冲）
-      const pulse = 0.88 + 0.12 * Math.sin(this._lockdownTriPhase);
-      const triSize = 52 * pulse;
-      ctx.save();
-      ctx.shadowColor = 'rgba(255, 40, 40, 0.9)';
-      ctx.shadowBlur = 18 * pulse;
-      ctx.strokeStyle = '#ff2828';
-      ctx.fillStyle = 'rgba(180, 0, 0, 0.25)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - triSize);
-      ctx.lineTo(cx + triSize * 0.866, cy + triSize * 0.5);
-      ctx.lineTo(cx - triSize * 0.866, cy + triSize * 0.5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-
-      // 三角内的 ! 符号
-      ctx.font = `bold ${28}px ${FONT_MONO}`;
-      ctx.fillStyle = '#ff4444';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.shadowColor = 'rgba(255, 60, 60, 0.8)';
-      ctx.shadowBlur = 8;
-      ctx.fillText('!', cx, cy + triSize * 0.08);
-      ctx.shadowBlur = 0;
-
-      // 警告！标签
-      ctx.font = `bold ${22}px ${FONT_PRIMARY}`;
-      ctx.fillStyle = '#ff3333';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.shadowColor = 'rgba(255, 40, 40, 0.7)';
-      ctx.shadowBlur = 10;
-      ctx.fillText('警告！', cx, cy + triSize * 0.5 + 18);
-      ctx.shadowBlur = 0;
-
-      // 逐字打印文字
-      if (this._lockdownTypingText) {
-        ctx.font = `bold ${14}px ${FONT_MONO}`;
-        ctx.fillStyle = '#ff3333';
-        ctx.textAlign = 'center';
-        ctx.shadowColor = 'rgba(255, 40, 40, 0.7)';
-        ctx.shadowBlur = 8;
-        ctx.fillText(this._lockdownTypingText, cx, cy + triSize * 0.5 + 52);
-        ctx.shadowBlur = 0;
-      }
-
-      // WARNING 滚动横幅（底部区域）
-      if (this._lockdownTimer > 4700) {
-        const scrollY = sh * 0.75;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, scrollY - 14, sw, 28);
-        ctx.clip();
-        ctx.font = `bold ${14}px ${FONT_MONO}`;
-        ctx.fillStyle = '#ff2020';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
-        ctx.shadowColor = 'rgba(255, 30, 30, 0.7)';
-        ctx.shadowBlur = 5;
-        // 绘制两段以实现无缝循环
-        const warningStr = '⚠ WARNING  ⚠ WARNING  ⚠ WARNING  ⚠ WARNING  ';
-        ctx.fillText(warningStr, this._lockdownScrollX, scrollY);
-        ctx.fillText(warningStr, this._lockdownScrollX + 500, scrollY);
-        ctx.restore();
-      }
-
-      ctx.globalAlpha = 1;
-    }
-
-    // ── Banner1：识别到重要嫌疑人 ──
-    if (this._lockdownBanner1Alpha > 0) {
-      this._drawNotifBanner(ctx, sw, this._lockdownBanner1Y, this._lockdownBanner1Alpha,
-        '[法司大人·档录系统]',
-        '识别到连接对象为重要嫌疑人，开启自动封锁功能',
-        '#ff4444'
-      );
-    }
-
-    // ── Banner2：调查官授权恢复（用青色区别于封锁的红色） ──
-    if (this._lockdownBanner2Alpha > 0) {
-      this._drawNotifBanner(ctx, sw, this._lockdownBanner2Y, this._lockdownBanner2Alpha,
-        '[法司大人·档录系统]',
-        '调查官授权通过，恢复链接对象权限',
-        '#00f5d4'
-      );
-    }
-
-    ctx.restore();
-  }
-
-  /** 绘制手机通知横幅 */
-  _drawNotifBanner(ctx, sw, bannerY, alpha, title, body, accentColor) {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    const bw = sw - 24;
-    const bh = 56;
-    const bx = 12;
-    const br = 12;
-
-    // 背景
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = 12;
-    ctx.fillStyle = 'rgba(12, 16, 38, 0.95)';
-    this._roundRect(ctx, bx, bannerY, bw, bh, br);
-    ctx.fill();
+    ctx.fillStyle = RUNE_CYAN;
+    ctx.shadowColor = 'rgba(0, 245, 212, 0.3)';
+    ctx.shadowBlur = 3;
+    ctx.fillText('× 关闭', r.x + r.w / 2, r.y + r.h / 2);
+    ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
 
-    // 左侧强调色竖线
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(bx + 4, bannerY + 10, 3, bh - 20);
-
-    // 边框
-    ctx.strokeStyle = 'rgba(60, 60, 90, 0.6)';
-    ctx.lineWidth = 1;
-    this._roundRect(ctx, bx, bannerY, bw, bh, br);
-    ctx.stroke();
-
-    // 标题
-    ctx.font = `${9}px ${FONT_MONO}`;
-    ctx.fillStyle = accentColor;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(title, bx + 14, bannerY + 10);
-
-    // 正文（颜色跟随 accentColor，封锁用红，恢复用青）
-    ctx.font = `bold ${12}px ${FONT_PRIMARY}`;
-    ctx.fillStyle = accentColor;
-    ctx.fillText(body, bx + 14, bannerY + 26);
-
     ctx.restore();
   }
 

@@ -743,30 +743,50 @@ export class NotesPage extends Scene {
     ctx.translate(0, -modalScrollY);
 
     // 绘制笔记正文
-    ctx.font = `${13.5}px ${FONT_PRIMARY}`;
-    ctx.fillStyle = '#a8b8cc';
+    const BODY_SIZE = 14;
+    const lineH = BODY_SIZE * 1.9;
+    const PARA_GAP = lineH * 0.55;
+    const contentInnerPad = 4;
+
+    ctx.font = `${BODY_SIZE}px ${FONT_PRIMARY}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
 
     const maxContentW = contentWidth;
-    const lineH = 13.5 * 1.95;
 
     // 计算换行（缓存）
     if (!this._modalContentLines || this._modalContentLines.length === 0) {
       this._modalContentLines = this._wrapText(ctx, note.content || '', maxContentW);
     }
 
-    const contentInnerPad = 4;
-    for (let li = 0; li < this._modalContentLines.length; li++) {
-      ctx.fillText(
-        this._modalContentLines[li],
-        (mx + contentPadding),
-        (contentTop + contentInnerPad + li * 13.5 * 1.95)
-      );
+    // 预算总高度
+    let totalContentH = contentInnerPad;
+    for (const ln of this._modalContentLines) {
+      if (ln.paraStart) totalContentH += PARA_GAP;
+      totalContentH += ln.text === '' ? lineH * 0.2 : lineH;
+    }
+
+    // 逐行渲染
+    let drawY = contentTop + contentInnerPad;
+    for (const ln of this._modalContentLines) {
+      if (ln.paraStart) drawY += PARA_GAP;
+      if (ln.text === '') {
+        drawY += lineH * 0.2;
+        continue;
+      }
+      if (ln.text.includes('→')) {
+        ctx.font = `${BODY_SIZE}px ${FONT_PRIMARY}`;
+        this._drawFlowLine(ctx, ln.text, mx + contentPadding, drawY);
+      } else {
+        ctx.fillStyle = '#b2c4d6';
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.fillText(ln.text, mx + contentPadding, drawY);
+      }
+      drawY += lineH;
     }
 
     // 更新弹窗 ScrollView 内容高度
-    const totalContentH = this._modalContentLines.length * 13.5 * 1.95;
     if (this._modalScrollView) {
       this._modalScrollView.contentHeight = totalContentH;
       this._modalScrollView.height = contentHeight;
@@ -781,31 +801,64 @@ export class NotesPage extends Scene {
   }
 
   /**
-   * 文字换行工具
+   * 渲染含 → 的流程行，箭头用青色发光
+   * @private
+   */
+  _drawFlowLine(ctx, line, x, y) {
+    const parts = line.split('→');
+    let curX = x;
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i]) {
+        ctx.fillStyle = '#b2c4d6';
+        ctx.fillText(parts[i], curX, y);
+        curX += ctx.measureText(parts[i]).width;
+      }
+      if (i < parts.length - 1) {
+        ctx.fillStyle = RUNE_CYAN;
+        ctx.shadowColor = 'rgba(0, 245, 212, 0.5)';
+        ctx.shadowBlur = 3;
+        ctx.fillText('→', curX, y);
+        curX += ctx.measureText('→').width;
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+      }
+    }
+  }
+
+  /**
+   * 文字换行，返回 {text, paraStart}[]
+   * paraStart=true 表示该行是新段落首行（非第一段）
    * @private
    */
   _wrapText(ctx, text, maxWidth) {
-    if (!text) return [''];
-    const lines = [];
+    if (!text) return [{ text: '', paraStart: false }];
+    const result = [];
     const paragraphs = text.split('\n');
-    for (const para of paragraphs) {
+    for (let pi = 0; pi < paragraphs.length; pi++) {
+      const para = paragraphs[pi];
       if (para === '') {
-        lines.push('');
+        result.push({ text: '', paraStart: false });
         continue;
       }
       let currentLine = '';
+      let isFirstWrapped = true;
       for (let i = 0; i < para.length; i++) {
         const testLine = currentLine + para[i];
         if (ctx.measureText(testLine).width > maxWidth && currentLine.length > 0) {
-          lines.push(currentLine);
+          result.push({ text: currentLine, paraStart: isFirstWrapped && pi > 0 });
+          isFirstWrapped = false;
           currentLine = para[i];
         } else {
           currentLine = testLine;
         }
       }
-      if (currentLine) lines.push(currentLine);
+      if (currentLine) {
+        result.push({ text: currentLine, paraStart: isFirstWrapped && pi > 0 });
+      }
     }
-    return lines.length > 0 ? lines : [''];
+    return result.length > 0 ? result : [{ text: '', paraStart: false }];
   }
 
   // ==================== 更新 ====================

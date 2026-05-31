@@ -12,3 +12,25 @@ $RECYCLE.BIN/
 
 # Node.js
 node_modules/
+package.json
+package-lock.json
+
+# 开发协作文件
+CLAUDE.md
+
+# 开发工具脚本
+verify_layout.mjs
+
+# 微信开发者工具私有配置
+project.private.config.json
+
+# 数据备份文件
+js/data/*.bak
+
+# 根目录截图（开发用，不入库；res/images/ 内的游戏资源不受影响）
+screenshot_*.png
+screenshot_*.jpg
+ss*.png
+ss*.jpg
+size_*.png
+size_*.jpg

@@ -262,32 +262,36 @@ export class MessageBubble extends Node {
     const w = this.containerWidth;
     const lineY = (this.height / 2);
 
-    // 测量文字宽度
-    ctx.font = `${FONT_SIZE_SM}px ${FONT_MONO}`;
-    const textWidth = ctx.measureText(this.msgText).width;
-    const textAreaWidth = textWidth + 24; // 文字两侧各留 12px 间距
+    // measureText + 渐变均缓存，避免每帧重建
+    if (this._cachedSysTextWidth === undefined) {
+      ctx.font = `${FONT_SIZE_SM}px ${FONT_MONO}`;
+      this._cachedSysTextWidth = ctx.measureText(this.msgText).width;
+    }
+    const textWidth = this._cachedSysTextWidth;
+    const textAreaWidth = textWidth + 24;
     const centerX = w / 2;
     const textLeft = centerX - textAreaWidth / 2;
     const textRight = centerX + textAreaWidth / 2;
 
-    // 左侧渐变线
-    const leftGrad = ctx.createLinearGradient(SPACING_MD, 0, textLeft, 0);
-    leftGrad.addColorStop(0, 'transparent');
-    leftGrad.addColorStop(0.4, 'rgba(155, 93, 229, 0.25)');
-    leftGrad.addColorStop(0.7, 'rgba(0, 245, 212, 0.2)');
-    leftGrad.addColorStop(1, 'transparent');
+    if (!this._cachedSysLeftGrad) {
+      this._cachedSysLeftGrad = ctx.createLinearGradient(SPACING_MD, 0, textLeft, 0);
+      this._cachedSysLeftGrad.addColorStop(0, 'transparent');
+      this._cachedSysLeftGrad.addColorStop(0.4, 'rgba(155, 93, 229, 0.25)');
+      this._cachedSysLeftGrad.addColorStop(0.7, 'rgba(0, 245, 212, 0.2)');
+      this._cachedSysLeftGrad.addColorStop(1, 'transparent');
+    }
+    if (!this._cachedSysRightGrad) {
+      this._cachedSysRightGrad = ctx.createLinearGradient(textRight, 0, w - SPACING_MD, 0);
+      this._cachedSysRightGrad.addColorStop(0, 'transparent');
+      this._cachedSysRightGrad.addColorStop(0.3, 'rgba(0, 245, 212, 0.2)');
+      this._cachedSysRightGrad.addColorStop(0.6, 'rgba(155, 93, 229, 0.25)');
+      this._cachedSysRightGrad.addColorStop(1, 'transparent');
+    }
 
-    ctx.fillStyle = leftGrad;
+    ctx.fillStyle = this._cachedSysLeftGrad;
     ctx.fillRect(SPACING_MD, lineY, textLeft - SPACING_MD, SYSTEM_LINE_HEIGHT);
 
-    // 右侧渐变线
-    const rightGrad = ctx.createLinearGradient(textRight, 0, w - SPACING_MD, 0);
-    rightGrad.addColorStop(0, 'transparent');
-    rightGrad.addColorStop(0.3, 'rgba(0, 245, 212, 0.2)');
-    rightGrad.addColorStop(0.6, 'rgba(155, 93, 229, 0.25)');
-    rightGrad.addColorStop(1, 'transparent');
-
-    ctx.fillStyle = rightGrad;
+    ctx.fillStyle = this._cachedSysRightGrad;
     ctx.fillRect(textRight, lineY, w - SPACING_MD - textRight, SYSTEM_LINE_HEIGHT);
 
     // 文字背景
@@ -347,10 +351,13 @@ export class MessageBubble extends Node {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
       ctx.fill();
 
-      // 左侧强调边框（渐变色）
-      const borderGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
-      borderGrad.addColorStop(0, RUNE_CYAN);
-      borderGrad.addColorStop(1, RUNE_PURPLE);
+      // 左侧强调边框（渐变色）—— 缓存 gradient 避免每帧重建
+      if (!this._cachedBorderGrad || this._cachedBorderGradH !== bh) {
+        this._cachedBorderGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
+        this._cachedBorderGrad.addColorStop(0, RUNE_CYAN);
+        this._cachedBorderGrad.addColorStop(1, RUNE_PURPLE);
+        this._cachedBorderGradH = bh;
+      }
       ctx.strokeStyle = 'rgba(0, 245, 212, 0.12)';
       ctx.lineWidth = 0.5;
       ctx.stroke();
@@ -359,17 +366,9 @@ export class MessageBubble extends Node {
       ctx.beginPath();
       ctx.moveTo(bx, by + cut);
       ctx.lineTo(bx, by + bh);
-      ctx.strokeStyle = borderGrad;
+      ctx.strokeStyle = this._cachedBorderGrad;
       ctx.lineWidth = 1.5;
       ctx.stroke();
-
-      // 扫描线纹理
-      ctx.globalAlpha = 0.015;
-      for (let sy = by; sy < by + bh; sy += 5) {
-        ctx.fillStyle = RUNE_CYAN;
-        ctx.fillRect(bx, sy, bw, 0.5);
-      }
-      ctx.globalAlpha = 1;
 
       ctx.restore();
 

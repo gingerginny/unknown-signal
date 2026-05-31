@@ -216,48 +216,88 @@ export class Engine {
    * @private
    */
   _bindTouchEvents() {
-    // 将原始触摸坐标转换为逻辑坐标
-    // 微信小游戏 wx.onTouchStart 返回的 clientX/clientY 已是 CSS 逻辑像素
-    // 与 windowWidth/windowHeight 同一坐标系，无需除以 pixelRatio
-    const convertTouch = (rawTouch) => ({
-      identifier: rawTouch.identifier,
-      x: rawTouch.clientX,
-      y: rawTouch.clientY,
-      rawX: rawTouch.clientX,
-      rawY: rawTouch.clientY,
-    });
+    const canvas = this._canvas;
+
+    // clientX/clientY 是 CSS 逻辑像素，canvas 全屏时与逻辑坐标系一致
+    const getOffset = () => canvas.getBoundingClientRect();
+
+    const convertTouch = (rawTouch) => {
+      const rect = getOffset();
+      const x = rawTouch.clientX - rect.left;
+      const y = rawTouch.clientY - rect.top;
+      return { identifier: rawTouch.identifier, x, y, rawX: x, rawY: y };
+    };
 
     const convertEvent = (e) => ({
-      touches: e.touches.map(convertTouch),
-      changedTouches: e.changedTouches.map(convertTouch),
+      touches: Array.from(e.touches).map(convertTouch),
+      changedTouches: Array.from(e.changedTouches).map(convertTouch),
       timeStamp: e.timeStamp,
     });
 
-    wx.onTouchStart((e) => {
+    // 触摸事件
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
       const scene = this._currentScene();
       if (scene && typeof scene.onTouchStart === 'function') {
         scene.onTouchStart(convertEvent(e));
       }
-    });
+    }, { passive: false });
 
-    wx.onTouchMove((e) => {
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
       const scene = this._currentScene();
       if (scene && typeof scene.onTouchMove === 'function') {
         scene.onTouchMove(convertEvent(e));
       }
-    });
+    }, { passive: false });
 
-    wx.onTouchEnd((e) => {
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      const scene = this._currentScene();
+      if (scene && typeof scene.onTouchEnd === 'function') {
+        scene.onTouchEnd(convertEvent(e));
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchcancel', (e) => {
       const scene = this._currentScene();
       if (scene && typeof scene.onTouchEnd === 'function') {
         scene.onTouchEnd(convertEvent(e));
       }
     });
 
-    wx.onTouchCancel((e) => {
+    // 鼠标事件兜底（桌面浏览器调试用）
+    let mouseDown = false;
+    const mouseToTouch = (e) => ({
+      identifier: 0,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      mouseDown = true;
       const scene = this._currentScene();
+      const t = mouseToTouch(e);
+      if (scene && typeof scene.onTouchStart === 'function') {
+        scene.onTouchStart({ touches: [convertTouch(t)], changedTouches: [convertTouch(t)], timeStamp: e.timeStamp });
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!mouseDown) return;
+      const scene = this._currentScene();
+      const t = mouseToTouch(e);
+      if (scene && typeof scene.onTouchMove === 'function') {
+        scene.onTouchMove({ touches: [convertTouch(t)], changedTouches: [convertTouch(t)], timeStamp: e.timeStamp });
+      }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      mouseDown = false;
+      const scene = this._currentScene();
+      const t = mouseToTouch(e);
       if (scene && typeof scene.onTouchEnd === 'function') {
-        scene.onTouchEnd(convertEvent(e));
+        scene.onTouchEnd({ touches: [], changedTouches: [convertTouch(t)], timeStamp: e.timeStamp });
       }
     });
   }
