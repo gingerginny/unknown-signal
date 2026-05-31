@@ -178,6 +178,13 @@ export class EvidencePage extends Scene {
     this._logicChain = [];
     this._completedCount = 0;
 
+    // 推理 Tab 滚动
+    this._reasoningScrollY = 0;
+    this._reasoningMaxScrollY = 0;
+    this._reasoningScrollVelocity = 0;
+    this._reasoningScrollDragging = false;
+    this._reasoningScrollLastY = 0;
+
     // 逻辑链路 ScrollView
     this._chainScrollView = null;
 
@@ -241,13 +248,12 @@ export class EvidencePage extends Scene {
     this.width = this._screenWidth;
     this.height = this._screenHeight;
 
-    // 球体尺寸按屏幕宽度自适应（占屏幕宽度 90%，最大 420px）
-    const _sz = Math.min(Math.floor(this._screenWidth * 0.9), 420);
-    this._sphereAreaSize = _sz;
-    this._sphereRadius = Math.floor(_sz * 0.38);
-    this._sphereCenterX = Math.floor(_sz / 2);
-    this._sphereCenterY = Math.floor(_sz / 2);
-    this._projectionDepth = Math.floor(_sz * 0.67);
+    // 球体尺寸：固定 300px（页面整体可滚动，无需按高度压缩）
+    this._sphereAreaSize = 300;
+    this._sphereRadius = 110;
+    this._sphereCenterX = 150;
+    this._sphereCenterY = 150;
+    this._projectionDepth = 200;
 
     // 标记页面访问
     gameState.markPageVisited('evidence');
@@ -780,6 +786,8 @@ export class EvidencePage extends Scene {
     }
 
     if (tab === 'reasoning') {
+      this._reasoningScrollY = 0;
+      this._reasoningScrollVelocity = 0;
       this._initReasoning();
     }
   }
@@ -1295,6 +1303,14 @@ export class EvidencePage extends Scene {
       }
     }
 
+    // 推理 Tab 惯性滚动
+    if (this._currentTab === 'reasoning' && !this._reasoningScrollDragging && Math.abs(this._reasoningScrollVelocity) > 0.5) {
+      this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + this._reasoningScrollVelocity));
+      this._reasoningScrollVelocity *= 0.88;
+      if (Math.abs(this._reasoningScrollVelocity) < 0.5) this._reasoningScrollVelocity = 0;
+      this._isDirty = true;
+    }
+
     // 搜索结果区域惯性滚动
     if (!this._resultDragging && Math.abs(this._resultVelocity) > 0.5) {
       this._resultScrollY = Math.max(0, Math.min(this._resultMaxScrollY, this._resultScrollY + this._resultVelocity));
@@ -1619,6 +1635,11 @@ export class EvidencePage extends Scene {
 
   _handleReasoningTabTouch(x, y, phase) {
     const contentTop = this._getContentTop();
+    const scrollY = this._reasoningScrollY;
+
+    // cy：内容坐标（加上滚动偏移），用于所有命中检测
+    const cy = y + scrollY;
+
     const modeToggleY = contentTop + 8;
     const sphereY = modeToggleY + 40;
     const sphereBottom = sphereY + this._sphereAreaSize;
@@ -1626,110 +1647,131 @@ export class EvidencePage extends Scene {
     const reasonBtnY = selectedAreaY + 40;
     const chainY = reasonBtnY + 50;
 
-    // 模式切换
-    if (phase === 'end' && y >= modeToggleY && y <= modeToggleY + 36) {
-      const mid = this._screenWidth / 2;
-      if (x < mid) {
-        this._switchMode('relate');
-      } else {
-        this._switchMode('contradict');
-      }
-      return;
-    }
-
-    // 3D 球面区域
+    // 球体在屏幕上的可见范围（随滚动偏移）
     const sphereLeft = (this._screenWidth - this._sphereAreaSize) / 2;
-    if (x >= sphereLeft && x <= sphereLeft + this._sphereAreaSize &&
-        y >= sphereY && y <= sphereBottom) {
-      if (phase === 'start') {
+    const sphereScreenTop = sphereY - scrollY;
+    const sphereScreenBottom = sphereBottom - scrollY;
+    const inSphere = x >= sphereLeft && x <= sphereLeft + this._sphereAreaSize &&
+                     y >= Math.max(contentTop, sphereScreenTop) && y <= sphereScreenBottom;
+
+    // ── touchStart：锁定交互目标 ─────────────────────────────────────────
+    if (phase === 'start') {
+      this._reasoningScrollDragging = !inSphere;
+      this._reasoningScrollLastY = y;
+      this._reasoningScrollVelocity = 0;
+      if (inSphere) {
         this._isInertiaActive = false;
         this._lastTouch = { x, y };
         this._velocityX = 0;
         this._velocityY = 0;
-      } else if (phase === 'move' && this._lastTouch) {
+      } else {
+        this._lastTouch = null;
+      }
+      return;
+    }
+
+    // ── touchMove ────────────────────────────────────────────────────────
+    if (phase === 'move') {
+      if (this._reasoningScrollDragging) {
+        const delta = this._reasoningScrollLastY - y;
+        this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + delta));
+        this._reasoningScrollVelocity = delta * 0.6;
+        this._reasoningScrollLastY = y;
+        this._isDirty = true;
+        return;
+      }
+      // 球体旋转
+      if (this._lastTouch) {
         const dx = x - this._lastTouch.x;
         const dy = y - this._lastTouch.y;
         this._lastTouch = { x, y };
         this._velocityX = -dx * ROTATION_SPEED;
         this._velocityY = dy * ROTATION_SPEED;
         this._rotateSphere(this._velocityX, this._velocityY);
-      } else if (phase === 'end') {
-        if (this._lastTouch) {
-          const moved = this._lastTouch && (
-            Math.abs(this._velocityX) > 0.001 ||
-            Math.abs(this._velocityY) > 0.001
-          );
-          if (moved) {
-            this._isInertiaActive = true;
-          } else {
-            // 未拖拽 → 检测气泡点击
-            const bubbles = this._projectBubbles();
-            const localX = x - sphereLeft;
-            const localY = y - sphereY;
-            // 从前到后（zIndex 大的在上面）反向遍历
-            for (let i = bubbles.length - 1; i >= 0; i--) {
-              const b = bubbles[i];
-              const bx = b.screenX;
-              const by = b.screenY;
-              const hitR = 30 * b.scale;
-              if (Math.abs(localX - bx) < hitR && Math.abs(localY - by) < hitR) {
-                this._tapBubble(b.id);
-                break;
-              }
+      }
+      return;
+    }
+
+    // ── touchEnd ─────────────────────────────────────────────────────────
+    if (phase === 'end') {
+      if (this._reasoningScrollDragging) {
+        this._reasoningScrollDragging = false;
+        return;
+      }
+
+      // 球体点击
+      if (this._lastTouch) {
+        const moved = Math.abs(this._velocityX) > 0.001 || Math.abs(this._velocityY) > 0.001;
+        if (moved) {
+          this._isInertiaActive = true;
+        } else {
+          const bubbles = this._projectBubbles();
+          const localX = x - sphereLeft;
+          const localY = y - sphereScreenTop;
+          for (let i = bubbles.length - 1; i >= 0; i--) {
+            const b = bubbles[i];
+            const hitR = 30 * b.scale;
+            if (Math.abs(localX - b.screenX) < hitR && Math.abs(localY - b.screenY) < hitR) {
+              this._tapBubble(b.id);
+              break;
             }
           }
-          this._lastTouch = null;
         }
+        this._lastTouch = null;
+        return;
       }
-      return;
-    }
 
-    // 已选区域 → 取消选择
-    if (phase === 'end' && y >= selectedAreaY && y <= selectedAreaY + 36) {
-      const slotW = 100;
-      const gap = 16;
-      const totalW = slotW * 2 + gap;
-      const startX = (this._screenWidth - totalW) / 2;
-      if (this._selectedBubbles[0] && x >= startX && x <= startX + slotW) {
-        this._deselectBubble(this._selectedBubbles[0].id);
-      } else if (this._selectedBubbles[1] && x >= startX + slotW + gap && x <= startX + totalW) {
-        this._deselectBubble(this._selectedBubbles[1].id);
+      // 模式切换（内容坐标）
+      if (cy >= modeToggleY && cy <= modeToggleY + 36) {
+        const mid = this._screenWidth / 2;
+        this._switchMode(x < mid ? 'relate' : 'contradict');
+        return;
       }
-      return;
-    }
 
-    // 推理按钮
-    if (phase === 'end' && y >= reasonBtnY && y <= reasonBtnY + 40) {
-      const btnLeft = 40;
-      const btnRight = this._screenWidth - 40;
-      if (x >= btnLeft && x <= btnRight) {
-        this._doReasoning();
-      }
-      return;
-    }
-
-    // 逻辑链路列表点击（双列布局，左=关联，右=矛盾）
-    if (phase === 'end' && y >= chainY) {
-      const colGap = 8;
-      const colPx = 12;
-      const colW = Math.floor((this._screenWidth - colPx * 2 - colGap) / 2);
-      const rightColX = colPx + colW + colGap;
-      // 列标题 24 + 18 = 42px
-      const itemsStartY = chainY + 42;
-      const isRight = x >= rightColX;
-      const colItems = isRight
-        ? this._logicChain.filter(ci => ci.mode === 'contradict')
-        : this._logicChain.filter(ci => ci.mode === 'relate');
-      let cumY = itemsStartY;
-      for (const chainItem of colItems) {
-        const ciH = chainItem.completed ? 48 : 28;
-        if (y >= cumY && y < cumY + ciH) {
-          if (chainItem.completed) this._tapChainItem(chainItem.resultId);
-          break;
+      // 已选区域（内容坐标）
+      if (cy >= selectedAreaY && cy <= selectedAreaY + 36) {
+        const slotW = 100;
+        const gap = 16;
+        const totalW = slotW * 2 + gap;
+        const startX = (this._screenWidth - totalW) / 2;
+        if (this._selectedBubbles[0] && x >= startX && x <= startX + slotW) {
+          this._deselectBubble(this._selectedBubbles[0].id);
+        } else if (this._selectedBubbles[1] && x >= startX + slotW + gap && x <= startX + totalW) {
+          this._deselectBubble(this._selectedBubbles[1].id);
         }
-        cumY += ciH;
+        return;
       }
-      return;
+
+      // 推理按钮（内容坐标）
+      if (cy >= reasonBtnY && cy <= reasonBtnY + 40) {
+        const btnLeft = 40;
+        const btnRight = this._screenWidth - 40;
+        if (x >= btnLeft && x <= btnRight) this._doReasoning();
+        return;
+      }
+
+      // 逻辑链路（内容坐标）
+      if (cy >= chainY) {
+        const colGap = 8;
+        const colPx = 12;
+        const colW = Math.floor((this._screenWidth - colPx * 2 - colGap) / 2);
+        const rightColX = colPx + colW + colGap;
+        const itemsStartY = chainY + 42;
+        const isRight = x >= rightColX;
+        const colItems = isRight
+          ? this._logicChain.filter(ci => ci.mode === 'contradict')
+          : this._logicChain.filter(ci => ci.mode === 'relate');
+        let cumY = itemsStartY;
+        for (const chainItem of colItems) {
+          const ciH = chainItem.completed ? 48 : 28;
+          if (cy >= cumY && cy < cumY + ciH) {
+            if (chainItem.completed) this._tapChainItem(chainItem.resultId);
+            break;
+          }
+          cumY += ciH;
+        }
+        return;
+      }
     }
   }
 
@@ -2140,33 +2182,35 @@ export class EvidencePage extends Scene {
 
   _drawReasoningTab(ctx) {
     const sw = this._screenWidth;
+    const sh = this._screenHeight;
     const contentTop = this._getContentTop();
 
-    // 模式切换
+    // 计算内容总高度，更新最大滚动量
+    const relateCount = this._logicChain.filter(c => c.mode === 'relate').length;
+    const contradictCount = this._logicChain.filter(c => c.mode === 'contradict').length;
+    const chainItemsH = Math.max(relateCount, contradictCount) * 52;
+    const totalContentH = 40 + this._sphereAreaSize + 90 + 42 + chainItemsH + 40;
+    this._reasoningMaxScrollY = Math.max(0, totalContentH - (sh - contentTop));
+
+    // 裁剪到内容区，防止滚动内容盖住顶部 header/tab
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, contentTop, sw, sh - contentTop);
+    ctx.clip();
+    ctx.translate(0, -this._reasoningScrollY);
+
     this._drawModeToggle(ctx, contentTop);
-
-    // 3D 球面
     this._drawSphere(ctx, contentTop + 40);
-
-    // 已选展示区
     this._drawSelectedArea(ctx, contentTop + 40 + this._sphereAreaSize + 4);
-
-    // 推理按钮
     this._drawReasonButton(ctx, contentTop + 40 + this._sphereAreaSize + 44);
-
-    // 逻辑链路
     const chainY = contentTop + 40 + this._sphereAreaSize + 90;
     this._drawLogicChain(ctx, chainY);
 
-    // 提示卡片：固定锚在屏幕底部
-    if (this._hintCardVisible) {
-      this._drawHintCard(ctx);
-    }
+    ctx.restore();
 
-    // 缺少词条中央提示
-    if (this._missingMsgVisible) {
-      this._drawMissingEvidenceMsg(ctx);
-    }
+    // 固定浮层：不随滚动移动
+    if (this._hintCardVisible) this._drawHintCard(ctx);
+    if (this._missingMsgVisible) this._drawMissingEvidenceMsg(ctx);
   }
 
   /** 提示卡片 — 固定锚在屏幕底部 */
