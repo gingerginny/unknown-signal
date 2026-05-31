@@ -30,14 +30,18 @@ const ctx = canvas.getContext('2d');
 const engine = new Engine(canvas, ctx, { width: windowWidth, height: windowHeight, pixelRatio });
 engine.start();
 
-// 监听可见区域变化（地址栏收起/弹出、虚拟键盘），动态更新 canvas 高度
-// 注意：只更新高度，不触发游戏内部 resize（布局固定），仅防止下方黑边
+// 监听可见区域变化（地址栏收起/弹出），动态更新 canvas 高度
+// 只在高度增大时更新（地址栏收起），键盘弹出导致高度骤减时跳过，避免页面被压缩
+const _initCanvasH = windowHeight;
 const _updateCanvasHeight = () => {
   const vvp = window.visualViewport;
   const newH = vvp ? vvp.height : window.innerHeight;
   const newW = Math.min(vvp ? vvp.width : window.innerWidth, 430);
-  canvas.style.height = newH + 'px';
   canvas.style.width = newW + 'px';
+  // 高度减少超过 25% 认为是键盘弹出，不压缩 canvas
+  if (newH >= _initCanvasH * 0.75) {
+    canvas.style.height = newH + 'px';
+  }
 };
 
 if (window.visualViewport) {

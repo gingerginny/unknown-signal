@@ -214,8 +214,10 @@ export class EditBox extends Node {
       border: none;
       outline: none;
       background: transparent;
-      font-size: ${this.fontSize}px;
+      font-size: 16px;
       padding: 0 ${this.paddingX}px;
+      transform: scale(${this.fontSize / 16});
+      transform-origin: left top;
     `;
 
     input.addEventListener('input', (e) => {
@@ -234,8 +236,8 @@ export class EditBox extends Node {
 
     document.body.appendChild(input);
     this._nativeInput = input;
-    // 延迟 focus 确保 DOM 已挂载
-    setTimeout(() => input.focus(), 50);
+    // 同步聚焦：iOS Safari 要求 focus() 在用户手势的同步调用链内执行，setTimeout 会失效
+    input.focus();
   }
 
   /**

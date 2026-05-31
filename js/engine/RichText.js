@@ -233,7 +233,7 @@ export class RichText extends Node {
 
       // 绘制下划线（虚线）
       if (item.underline) {
-        const underlineY = item.y + this.fontSize * 0.95;
+        const underlineY = item.y + this.fontSize * 1.1;
         ctx.save();
         ctx.strokeStyle = item.color;
         ctx.lineWidth = 1;

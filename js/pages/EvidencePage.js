@@ -412,6 +412,10 @@ export class EvidencePage extends Scene {
       paddingX: 8,
       fontFamily: FONT_MONO,
     });
+    // 设置位置，使透明 input overlay 与画面上的输入框对齐
+    // inputX = SEARCH_PANEL_PADDING + 8, inputY = contentTop + 32（与 _drawSearchEngine 一致）
+    this._searchEditBox.x = SEARCH_PANEL_PADDING + 8;
+    this._searchEditBox.y = contentTop + 32;
     this._searchEditBox.on('confirm', () => this._onSearch());
     // 键盘每次输入实时同步到 _searchQuery，让手绘输入框能看到正在打的内容
     this._searchEditBox.on('input', ({ value }) => { this._searchQuery = value; this._isDirty = true; });
