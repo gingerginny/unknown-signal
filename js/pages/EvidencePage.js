@@ -182,9 +182,9 @@ export class EvidencePage extends Scene {
     this._reasoningScrollY = 0;
     this._reasoningMaxScrollY = 0;
     this._reasoningScrollVelocity = 0;
-    this._reasoningScrollDragging = false;
-    this._reasoningScrollLastY = 0;
-    this._reasoningScrollMoved = false;  // 区分拖拽与点击
+    this._reasoningTouchStartY = 0;   // touchStart 记录起始 Y
+    this._reasoningTouchLastY = 0;    // touchMove 上一帧 Y
+    this._reasoningInSphere = false;  // touchStart 时是否在球体内
 
     // 逻辑链路 ScrollView
     this._chainScrollView = null;
@@ -789,6 +789,7 @@ export class EvidencePage extends Scene {
     if (tab === 'reasoning') {
       this._reasoningScrollY = 0;
       this._reasoningScrollVelocity = 0;
+      this._reasoningInSphere = false;
       this._initReasoning();
     }
   }
@@ -1305,7 +1306,7 @@ export class EvidencePage extends Scene {
     }
 
     // 推理 Tab 惯性滚动
-    if (this._currentTab === 'reasoning' && !this._reasoningScrollDragging && Math.abs(this._reasoningScrollVelocity) > 0.5) {
+    if (this._currentTab === 'reasoning' && Math.abs(this._reasoningScrollVelocity) > 0.5) {
       this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + this._reasoningScrollVelocity));
       this._reasoningScrollVelocity *= 0.88;
       if (Math.abs(this._reasoningScrollVelocity) < 0.5) this._reasoningScrollVelocity = 0;
@@ -1637,9 +1638,7 @@ export class EvidencePage extends Scene {
   _handleReasoningTabTouch(x, y, phase) {
     const contentTop = this._getContentTop();
     const scrollY = this._reasoningScrollY;
-
-    // cy：内容坐标（加上滚动偏移），用于所有命中检测
-    const cy = y + scrollY;
+    const cy = y + scrollY; // 内容坐标
 
     const modeToggleY = contentTop + 8;
     const sphereY = modeToggleY + 40;
@@ -1648,20 +1647,20 @@ export class EvidencePage extends Scene {
     const reasonBtnY = selectedAreaY + 40;
     const chainY = reasonBtnY + 50;
 
-    // 球体在屏幕上的可见范围（随滚动偏移）
     const sphereLeft = (this._screenWidth - this._sphereAreaSize) / 2;
+    // 球体在屏幕上的实际位置（随滚动偏移）
     const sphereScreenTop = sphereY - scrollY;
     const sphereScreenBottom = sphereBottom - scrollY;
-    const inSphere = x >= sphereLeft && x <= sphereLeft + this._sphereAreaSize &&
-                     y >= Math.max(contentTop, sphereScreenTop) && y <= sphereScreenBottom;
 
-    // ── touchStart：锁定交互目标 ─────────────────────────────────────────
+    // ── touchStart ───────────────────────────────────────────────────────
     if (phase === 'start') {
-      this._reasoningScrollDragging = !inSphere;
-      this._reasoningScrollMoved = false;
-      this._reasoningScrollLastY = y;
+      this._reasoningTouchStartY = y;
+      this._reasoningTouchLastY = y;
       this._reasoningScrollVelocity = 0;
-      if (inSphere) {
+      // 判断是否在球体屏幕范围内
+      this._reasoningInSphere = x >= sphereLeft && x <= sphereLeft + this._sphereAreaSize &&
+        y >= Math.max(contentTop, sphereScreenTop) && y <= sphereScreenBottom;
+      if (this._reasoningInSphere) {
         this._isInertiaActive = false;
         this._lastTouch = { x, y };
         this._velocityX = 0;
@@ -1674,66 +1673,67 @@ export class EvidencePage extends Scene {
 
     // ── touchMove ────────────────────────────────────────────────────────
     if (phase === 'move') {
-      if (this._reasoningScrollDragging) {
-        const delta = this._reasoningScrollLastY - y;
-        if (Math.abs(delta) > 3) this._reasoningScrollMoved = true;
-        this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + delta));
-        this._reasoningScrollVelocity = delta * 0.6;
-        this._reasoningScrollLastY = y;
-        this._isDirty = true;
-        return;
-      }
-      // 球体旋转
-      if (this._lastTouch) {
+      if (this._reasoningInSphere && this._lastTouch) {
+        // 球体旋转
         const dx = x - this._lastTouch.x;
         const dy = y - this._lastTouch.y;
         this._lastTouch = { x, y };
         this._velocityX = -dx * ROTATION_SPEED;
         this._velocityY = dy * ROTATION_SPEED;
         this._rotateSphere(this._velocityX, this._velocityY);
+      } else {
+        // 页面滚动
+        const delta = this._reasoningTouchLastY - y;
+        this._reasoningScrollY = Math.max(0, Math.min(this._reasoningMaxScrollY, this._reasoningScrollY + delta));
+        this._reasoningScrollVelocity = delta * 0.6;
+        this._reasoningTouchLastY = y;
+        this._isDirty = true;
       }
       return;
     }
 
     // ── touchEnd ─────────────────────────────────────────────────────────
     if (phase === 'end') {
-      if (this._reasoningScrollDragging) {
-        this._reasoningScrollDragging = false;
-        // 有实际位移 → 是滚动，不处理点击
-        if (this._reasoningScrollMoved) return;
-        // 无位移 → 是点击，继续向下判断
-      }
+      // 滚动惯性继续
+      // 判断是点击还是滚动：总位移 < 10px 视为点击
+      const totalDy = Math.abs(y - this._reasoningTouchStartY);
+      const isTap = totalDy < 10;
 
-      // 球体点击
-      if (this._lastTouch) {
-        const moved = Math.abs(this._velocityX) > 0.001 || Math.abs(this._velocityY) > 0.001;
-        if (moved) {
-          this._isInertiaActive = true;
-        } else {
-          const bubbles = this._projectBubbles();
-          const localX = x - sphereLeft;
-          const localY = y - sphereScreenTop;
-          for (let i = bubbles.length - 1; i >= 0; i--) {
-            const b = bubbles[i];
-            const hitR = 30 * b.scale;
-            if (Math.abs(localX - b.screenX) < hitR && Math.abs(localY - b.screenY) < hitR) {
-              this._tapBubble(b.id);
-              break;
+      if (this._reasoningInSphere) {
+        // 球体区域
+        if (this._lastTouch) {
+          const moved = Math.abs(this._velocityX) > 0.001 || Math.abs(this._velocityY) > 0.001;
+          if (moved) {
+            this._isInertiaActive = true;
+          } else if (isTap) {
+            const bubbles = this._projectBubbles();
+            const localX = x - sphereLeft;
+            const localY = y - sphereScreenTop;
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+              const b = bubbles[i];
+              const hitR = 30 * b.scale;
+              if (Math.abs(localX - b.screenX) < hitR && Math.abs(localY - b.screenY) < hitR) {
+                this._tapBubble(b.id);
+                break;
+              }
             }
           }
+          this._lastTouch = null;
         }
-        this._lastTouch = null;
         return;
       }
 
-      // 模式切换（内容坐标）
+      // 非球体区域：只有点击才处理
+      if (!isTap) return;
+
+      // 模式切换
       if (cy >= modeToggleY && cy <= modeToggleY + 36) {
-        const mid = this._screenWidth / 2;
-        this._switchMode(x < mid ? 'relate' : 'contradict');
+        this._switchMode(x < this._screenWidth / 2 ? 'relate' : 'contradict');
+        this._isDirty = true;
         return;
       }
 
-      // 已选区域（内容坐标）
+      // 已选区域
       if (cy >= selectedAreaY && cy <= selectedAreaY + 36) {
         const slotW = 100;
         const gap = 16;
@@ -1744,18 +1744,17 @@ export class EvidencePage extends Scene {
         } else if (this._selectedBubbles[1] && x >= startX + slotW + gap && x <= startX + totalW) {
           this._deselectBubble(this._selectedBubbles[1].id);
         }
+        this._isDirty = true;
         return;
       }
 
-      // 推理按钮（内容坐标）
+      // 推理按钮
       if (cy >= reasonBtnY && cy <= reasonBtnY + 40) {
-        const btnLeft = 40;
-        const btnRight = this._screenWidth - 40;
-        if (x >= btnLeft && x <= btnRight) this._doReasoning();
+        if (x >= 40 && x <= this._screenWidth - 40) this._doReasoning();
         return;
       }
 
-      // 逻辑链路（内容坐标）
+      // 逻辑链路
       if (cy >= chainY) {
         const colGap = 8;
         const colPx = 12;
