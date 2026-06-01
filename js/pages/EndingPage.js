@@ -152,6 +152,10 @@ export class EndingPage extends Scene {
 
     // 检查是否已通关
     const state = gameState.get();
+    if (state.choices && state.choices.directToCredits) {
+      this._showCredits();
+      return;
+    }
     if (state.choices && state.choices.endingComplete) {
       this._showEndingCard();
       return;
@@ -1221,7 +1225,54 @@ export class EndingPage extends Scene {
 
     this.addChild(this._creditsScrollView);
 
-    let curY = 100;
+    // 星河头图（cover 模式：等比居中裁剪，不拉伸）
+    const imgH = Math.round(this._screenWidth * 0.52);
+    const headerNode = new Node();
+    headerNode.x = 0;
+    headerNode.y = 0;
+    headerNode.width = this._screenWidth;
+    headerNode.height = imgH;
+    headerNode._img = null;
+    headerNode._imgLoaded = false;
+    const headerImg = wx.createImage();
+    headerImg.onload = () => {
+      headerNode._img = headerImg;
+      headerNode._imgLoaded = true;
+    };
+    headerImg.src = 'res/images/xinghe.png';
+    headerNode._draw = function(ctx) {
+      if (!this._imgLoaded) return;
+      const dw = self._screenWidth;
+      const dh = imgH;
+      const iw = this._img.width;
+      const ih = this._img.height;
+      const scale = Math.max(dw / iw, dh / ih);
+      const sw = dw / scale;
+      const sh = dh / scale;
+      const sx = (iw - sw) / 2;
+      const sy = (ih - sh) / 2;
+      ctx.drawImage(this._img, sx, sy, sw, sh, 0, 0, dw, dh);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillRect(0, 0, dw, dh);
+    };
+    this._creditsScrollView.addChild(headerNode);
+
+    // 图片底部渐变过渡
+    const fadeMask = new Node();
+    fadeMask.x = 0;
+    fadeMask.y = imgH - 70;
+    fadeMask.width = this._screenWidth;
+    fadeMask.height = 70;
+    fadeMask._draw = function(ctx) {
+      const grad = ctx.createLinearGradient(0, 0, 0, 70);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(1, ENDING_BG);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, self._screenWidth, 70);
+    };
+    this._creditsScrollView.addChild(fadeMask);
+
+    let curY = imgH + 16;
 
     // 游戏标题
     const titleLabel = new Label({

@@ -136,6 +136,14 @@ function _loadTestEntry(entry) {
       engine.pushScene(new EndingPage());
       break;
 
+    case 'credits': {
+      GameState.reset();
+      GameState.init();
+      GameState.update({ ...GameState.get(), chapter: 5, isOpeningDone: true, choices: { endingComplete: true, directToCredits: true } });
+      engine.pushScene(new EndingPage());
+      break;
+    }
+
     case 'reasoning': {
       // 是因是果测试：ch3 + 推理 Tab + 前置推理结果已满足
       setupChapter(3);
