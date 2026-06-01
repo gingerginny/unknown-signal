@@ -227,11 +227,10 @@ export default class MainPage extends Scene {
     const shouldShowGhost = this._unlockedModules.includes('encrypted_chat');
     const ghostAnimated = !!wx.getStorageSync('ghost_portal_animated');
 
-    // ch4_recover 是否已被玩家看完（chat_last_played >= 4）
+    // ch4_recover 是否已被玩家看完（所有消息播放完毕后写入）
     let ch4RecoverRead = false;
     try {
-      const lp = wx.getStorageSync('chat_last_played');
-      ch4RecoverRead = typeof lp === 'number' && lp >= 4;
+      ch4RecoverRead = !!wx.getStorageSync('ch4_recover_complete');
     } catch (e) {}
 
     this._showGhostPortal = shouldShowGhost && ghostAnimated;

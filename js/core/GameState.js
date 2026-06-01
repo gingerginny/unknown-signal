@@ -106,7 +106,7 @@ const gameState = {
     _state = _cloneDefault();
     _save(_state);
     // 同时清除聊天相关存储
-    const chatKeys = ['chat_messages_history', 'chat_queue_state', 'chat_last_played', 'ch0_followup_played'];
+    const chatKeys = ['chat_messages_history', 'chat_queue_state', 'chat_last_played', 'ch0_followup_played', 'ch4_recover_complete'];
     chatKeys.forEach(key => {
       try { wx.removeStorageSync(key); } catch (e) { /* 忽略 */ }
     });

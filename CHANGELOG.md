@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## 2026-06-01
+- **fix: ch4 幽灵传送门触发时机**：幽灵通讯入口改为在玩家看完 ch4_recover 所有消息后才出现。`ChatEngine.js` 新增：ch4_recover 段落完成时写 `ch4_recover_complete` 到 localStorage；`MainPage.js` 改为检查此标记（原来检查 `chat_last_played >= 4` 会在段落开始时就触发）；`GameState.reset()` 同步清除该 key。
+
 ## 2026-05-31
 - **修复关键词虚线位置**：`RichText.js` 将下划线 Y 偏移从 `fontSize * 0.95` 改为 `fontSize * 1.1`，解决移动端浏览器中虚线出现在词语中间而非底部的问题（原因：移动端 `textBaseline='top'` 的字形留白与桌面端不同）
 - **修复键盘弹出压缩页面**：`game.js` 中 `_updateCanvasHeight` 新增保护——高度缩减超过 25% 时（键盘弹出）不更新 `canvas.style.height`，避免整个画面被压扁

@@ -490,6 +490,9 @@ export default class ChatEngine {
     if (this._dialogueQueue.length === 0) {
       this._saveHistory();
       this._clearQueueState();
+      if (this._currentSection === 'ch4_recover') {
+        try { wx.setStorageSync('ch4_recover_complete', true); } catch (e) {}
+      }
       this.emit('sectionComplete', this._currentSection);
       return;
     }
