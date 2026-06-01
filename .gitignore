@@ -34,3 +34,12 @@ ss*.png
 ss*.jpg
 size_*.png
 size_*.jpg
+fix_*.png
+fix_*.jpg
+
+# 开发日志与笔记
+CHANGELOG.md
+test.md
+
+# 编辑器配置
+.vscode/
