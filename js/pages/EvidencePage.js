@@ -835,7 +835,11 @@ export class EvidencePage extends Scene {
       }
     });
     // 已产出的推理结论
+    // leap_framework 在其余 BASE_ORDER 全部完成前隐藏，防止玩家提前组合 ④
+    const BASE_ORDER = ['impossible_leap', 'leap_framework', 'system_imbalance', 'identity_paradox', 'unreasonable_calm'];
+    const allBaseDone = BASE_ORDER.every(id => reasoningResults.includes(id));
     reasoningResults.forEach(resultId => {
+      if (resultId === 'leap_framework' && !allBaseDone) return;
       const combo = reasoningCombos.find(c => c.resultId === resultId);
       if (combo) {
         items.push({
@@ -1059,93 +1063,67 @@ export class EvidencePage extends Scene {
     const results = gameState.getReasoningResults();
     const pool = [...(gameState.get().collectedEvidence || []), ...results];
 
-    // ④ cause_and_effect 绝对最后提示（依赖③结论且有特殊叙事意义）
-    // 其余组合按此顺序处理
-    const BASE_ORDER = [
-      'impossible_leap',
-      'leap_framework',
-      'system_imbalance',
-      'identity_paradox',
-      'unreasonable_calm',
-    ];
+    // ④ cause_and_effect 只在其余所有组合全部完成后才纳入提示系统
+    const BASE_ORDER = ['impossible_leap', 'leap_framework', 'system_imbalance', 'identity_paradox', 'unreasonable_calm'];
+    const allBaseDone = BASE_ORDER.every(id => results.includes(id));
+    const ORDER = allBaseDone ? [...BASE_ORDER, 'cause_and_effect'] : BASE_ORDER;
 
-    // 第一轮：②③⑤⑥⑦中「证据已齐全、尚未完成」的组合
-    for (const resultId of BASE_ORDER) {
+    // 先找线索已齐、尚未推出的，取第一个提示
+    for (const resultId of ORDER) {
       if (results.includes(resultId)) continue;
       const idx = reasoningCombos.findIndex(c => c.resultId === resultId);
       if (idx === -1) continue;
       const combo = reasoningCombos[idx];
-      const missing = combo.ids.filter(id => !pool.includes(id));
-      if (missing.length === 0) {
-        this._hintCardVisible = true;
-        this._hintCardText = combo.hintText || '已收集到相关线索，试试把它们关联起来';
-        this._hintTargetComboIdx = idx;
-        this._hintStage = 1;
-        this._hintFailsSinceCard = 0;
-        this._hintFailsSinceBubble0 = 0;
-        this._hintBubble0Id = combo.ids[0];
-        this._hintBubble1Id = combo.ids[1];
-        this._isDirty = true;
+      if (combo.ids.every(id => pool.includes(id))) {
+        this._showHintCard(idx, combo);
         return;
       }
     }
 
-    // 第二轮：②③⑤⑥⑦中「证据不齐」的组合（缺证提示）
-    for (const resultId of BASE_ORDER) {
+    // 没有线索齐的，提示第一个缺证的
+    for (const resultId of ORDER) {
       if (results.includes(resultId)) continue;
       const idx = reasoningCombos.findIndex(c => c.resultId === resultId);
       if (idx === -1) continue;
       const combo = reasoningCombos[idx];
       const missing = combo.ids.filter(id => !pool.includes(id));
       if (missing.length > 0) {
-        // 消亡倾向缺失的特殊提示
-        if (missing.includes('death_gravity')) {
-          this._missingDeathGravityCount++;
-          if (this._missingDeathGravityCount >= 3) {
-            this._missingDeathGravityCount = 0;
-            this._missingMsgText = '某个异常线索搜索多次，可能会有不一样的结果';
-            this._missingMsgVisible = true;
-            this._missingMsgAlpha = 1;
-            this._missingMsgTimer = 3500;
-            this._isDirty = true;
-            return;
-          }
-        }
-        this._missingMsgText = '';
+        this._showMissingHint(missing);
+        return;
+      }
+    }
+  }
+
+  _showHintCard(idx, combo) {
+    this._hintCardVisible = true;
+    this._hintCardText = combo.hintText || '已收集到相关线索，试试把它们关联起来';
+    this._hintTargetComboIdx = idx;
+    this._hintStage = 1;
+    this._hintFailsSinceCard = 0;
+    this._hintFailsSinceBubble0 = 0;
+    this._hintBubble0Id = combo.ids[0];
+    this._hintBubble1Id = combo.ids[1];
+    this._isDirty = true;
+  }
+
+  _showMissingHint(missing) {
+    if (missing.includes('death_gravity')) {
+      this._missingDeathGravityCount++;
+      if (this._missingDeathGravityCount >= 3) {
+        this._missingDeathGravityCount = 0;
+        this._missingMsgText = '某个异常线索搜索多次，可能会有不一样的结果';
         this._missingMsgVisible = true;
         this._missingMsgAlpha = 1;
-        this._missingMsgTimer = 2800;
+        this._missingMsgTimer = 3500;
         this._isDirty = true;
         return;
       }
     }
-
-    // 最后：④ cause_and_effect（无论证据是否齐全，都在所有其他提示之后）
-    if (!results.includes('cause_and_effect')) {
-      const idx = reasoningCombos.findIndex(c => c.resultId === 'cause_and_effect');
-      if (idx !== -1) {
-        const combo = reasoningCombos[idx];
-        const missing = combo.ids.filter(id => !pool.includes(id));
-        if (missing.length === 0) {
-          this._hintCardVisible = true;
-          this._hintCardText = combo.hintText || '已收集到相关线索，试试把它们关联起来';
-          this._hintTargetComboIdx = idx;
-          this._hintStage = 1;
-          this._hintFailsSinceCard = 0;
-          this._hintFailsSinceBubble0 = 0;
-          this._hintBubble0Id = combo.ids[0];
-          this._hintBubble1Id = combo.ids[1];
-          this._isDirty = true;
-        } else {
-          // 证据不齐时也给缺证提示
-          this._missingMsgText = '';
-          this._missingMsgVisible = true;
-          this._missingMsgAlpha = 1;
-          this._missingMsgTimer = 2800;
-          this._isDirty = true;
-        }
-      }
-    }
+    this._missingMsgText = '';
+    this._missingMsgVisible = true;
+    this._missingMsgAlpha = 1;
+    this._missingMsgTimer = 2800;
+    this._isDirty = true;
   }
 
   /** 推理成功后清理当前提示状态 */
